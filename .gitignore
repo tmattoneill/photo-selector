@@ -1,0 +1,77 @@
+# ---- General ----
+.DS_Store
+Thumbs.db
+*.log
+*.env
+.env.local
+.env.*.local
+
+# ---- Python (FastAPI backend) ----
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.pyo
+*.pyd
+*.pkl
+*.sqlite
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.cache/
+*.db
+instance/
+*.mo
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# ---- Node / React (frontend) ----
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp/
+.pnp.js
+.pnpm-debug.log*
+coverage/
+dist/
+build/
+
+# Vite / React cache
+.vite/
+vite.config.ts.timestamp-*
+vite.config.js.timestamp-*
+
+# ---- IDE / Editor ----
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ---- PostgreSQL ----
+*.sql
+*.dump
+
+# ---- Docker ----
+/docker-data/
+/docker-volumes/
+*.pid
+
+# ---- Images (if re-generated from ingestion) ----
+/data/images_base64/
+/data/tmp/
+/uploads/
+
+# ---- Misc ----
+*.bak
+*.tmp
+*.orig
