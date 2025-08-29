@@ -15,11 +15,17 @@ import type {
 } from './types';
 
 const BASE_URL = 'http://localhost:8000/api';
+const BACKEND_URL = 'http://localhost:8000';
 
 const api = axios.create({
   baseURL: BASE_URL,
   timeout: 30000,
 });
+
+// Helper function for constructing image URLs
+export const getImageUrl = (imagePath: string): string => {
+  return `${BACKEND_URL}${imagePath}`;
+};
 
 export const apiClient = {
   async healthCheck(): Promise<{ status: string }> {

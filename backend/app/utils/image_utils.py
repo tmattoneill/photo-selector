@@ -5,6 +5,14 @@ from typing import Tuple, Optional
 from PIL import Image
 import magic
 
+# Enable HEIC support
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    # pillow-heif not installed, HEIC support disabled
+    pass
+
 
 def get_sha256_hash(file_path: str) -> str:
     """Generate SHA-256 hash from file content."""
@@ -36,17 +44,17 @@ def get_mime_type(file_path: str) -> str:
             '.jpg': 'image/jpeg',
             '.jpeg': 'image/jpeg', 
             '.png': 'image/png',
-            '.webp': 'image/webp'
+            '.webp': 'image/webp',
+            '.heic': 'image/heic'
         }
         return mime_map.get(ext, 'application/octet-stream')
 
 
 def encode_image_to_base64(file_path: str) -> str:
-    """Convert image file to base64 data URL."""
-    mime_type = get_mime_type(file_path)
+    """Convert image file to base64 string."""
     with open(file_path, 'rb') as f:
         encoded = base64.b64encode(f.read()).decode('utf-8')
-        return f"data:{mime_type};base64,{encoded}"
+        return encoded
 
 
 def is_supported_image(file_path: str, supported_formats: tuple) -> bool:

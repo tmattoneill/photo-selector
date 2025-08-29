@@ -27,29 +27,33 @@ export const StatsPage: React.FC = () => {
     loadStats();
   }, []);
 
+  const renderHeader = () => (
+    <header className="bg-white shadow-sm border-b border-gray-200">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between h-16">
+          <div className="flex items-center space-x-6">
+            <h1 className="text-2xl font-bold text-gray-900">Statistics</h1>
+            <nav className="flex space-x-4">
+              <Link to="/" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
+                Home
+              </Link>
+              <span className="text-gray-900 px-3 py-2 rounded-md text-sm font-medium bg-gray-100">
+                Stats
+              </span>
+              <Link to="/gallery" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
+                Gallery
+              </Link>
+            </nav>
+          </div>
+        </div>
+      </div>
+    </header>
+  );
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <header className="bg-white shadow-sm border-b border-gray-200">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex items-center justify-between h-16">
-              <div className="flex items-center space-x-6">
-                <h1 className="text-2xl font-bold text-gray-900">Statistics</h1>
-                <nav className="flex space-x-4">
-                  <Link to="/" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
-                    Home
-                  </Link>
-                  <span className="text-gray-900 px-3 py-2 rounded-md text-sm font-medium bg-gray-100">
-                    Stats
-                  </span>
-                  <Link to="/gallery" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
-                    Gallery
-                  </Link>
-                </nav>
-              </div>
-            </div>
-          </div>
-        </header>
+        {renderHeader()}
         <div className="flex items-center justify-center min-h-[calc(100vh-4rem)]">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
@@ -63,26 +67,7 @@ export const StatsPage: React.FC = () => {
   if (error) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <header className="bg-white shadow-sm border-b border-gray-200">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex items-center justify-between h-16">
-              <div className="flex items-center space-x-6">
-                <h1 className="text-2xl font-bold text-gray-900">Statistics</h1>
-                <nav className="flex space-x-4">
-                  <Link to="/" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
-                    Home
-                  </Link>
-                  <span className="text-gray-900 px-3 py-2 rounded-md text-sm font-medium bg-gray-100">
-                    Stats
-                  </span>
-                  <Link to="/gallery" className="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
-                    Gallery
-                  </Link>
-                </nav>
-              </div>
-            </div>
-          </div>
-        </header>
+        {renderHeader()}
         <div className="flex items-center justify-center min-h-[calc(100vh-4rem)]">
           <div className="text-center max-w-md">
             <div className="text-red-600 text-6xl mb-4">⚠️</div>
@@ -107,16 +92,7 @@ export const StatsPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-white shadow-sm border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <h1 className="text-2xl font-bold text-gray-900">Statistics</h1>
-            <Link to="/" className="btn-secondary">
-              Back to Picker
-            </Link>
-          </div>
-        </div>
-      </header>
+      {renderHeader()}
       {stats && <Stats stats={stats} />}
     </div>
   );

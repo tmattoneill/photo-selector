@@ -58,6 +58,7 @@ export interface GalleryImage {
   image_id: string;
   sha256: string;
   file_path: string;
+  mime_type: string;
   likes: number;
   unlikes: number;
   skips: number;

@@ -12,6 +12,7 @@ class ImageResponse(BaseModel):
     image_id: str
     sha256: str
     file_path: str
+    mime_type: str
     likes: int
     unlikes: int
     skips: int
@@ -43,11 +44,12 @@ async def get_gallery_images(
             image_id=str(img.id),
             sha256=img.sha256,
             file_path=img.file_path,
+            mime_type=img.mime_type,
             likes=img.likes,
             unlikes=img.unlikes,
             skips=img.skips,
             exposures=img.exposures,
-            base64_data=img.base64_data.decode('utf-8') if img.base64_data else "",
+            base64_data=f"/api/image/{img.id}",  # Image serving endpoint
             created_at=img.created_at.isoformat()
         ) for img in result["images"]
     ]

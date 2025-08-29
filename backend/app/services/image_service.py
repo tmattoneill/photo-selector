@@ -118,6 +118,8 @@ class ImageService:
                 
         except Exception as e:
             print(f"Error processing {file_path}: {e}")
+            import traceback
+            traceback.print_exc()
             return "error"
     
     def _create_canonical_image(self, file_path: str, sha256_hash: str):
@@ -125,7 +127,6 @@ class ImageService:
         width, height = get_image_dimensions(file_path)
         mime_type = get_mime_type(file_path)
         file_size = get_file_size(file_path)
-        base64_data = encode_image_to_base64(file_path)
         
         image = Image(
             sha256=sha256_hash,
@@ -134,7 +135,7 @@ class ImageService:
             width=width,
             height=height,
             file_size=file_size,
-            base64_data=base64_data.encode('utf-8'),
+            base64_data=b'',  # Empty - we serve files directly
             is_canonical=True,
             canonical_id=None
         )
@@ -153,7 +154,7 @@ class ImageService:
             width=canonical_image.width,
             height=canonical_image.height,
             file_size=file_size,
-            base64_data=canonical_image.base64_data,  # Reference same data
+            base64_data=b'',  # Empty - we serve files directly
             is_canonical=False,
             canonical_id=canonical_image.id
         )

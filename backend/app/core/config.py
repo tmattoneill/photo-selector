@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     # Image processing
     image_root: str = "/absolute/path/to/images"
     max_image_mb: int = 8
-    supported_formats: tuple = ("jpg", "jpeg", "png", "webp")
+    supported_formats: tuple = ("jpg", "jpeg", "png", "webp", "heic")
     
     # API
     api_prefix: str = "/api"

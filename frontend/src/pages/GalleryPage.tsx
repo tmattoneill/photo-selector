@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { apiClient } from '../api/client';
+import { apiClient, getImageUrl } from '../api/client';
 import type { GalleryImage, GalleryFilter } from '../api/types';
 import { PortfolioModal } from '../components/PortfolioModal';
 
@@ -171,7 +171,7 @@ export const GalleryPage: React.FC = () => {
                 onClick={() => handleImageSelect(image.image_id)}
               >
                 <img
-                  src={`data:image/jpeg;base64,${image.base64_data}`}
+                  src={getImageUrl(image.base64_data)}
                   alt={`Image ${image.sha256.substring(0, 8)}`}
                   className="w-full h-48 object-cover"
                 />

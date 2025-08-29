@@ -36,10 +36,11 @@ async def get_image_pair(db: Session = Depends(get_db)):
             )
         
         def format_image(image) -> ImageData:
+            # Use file path for image serving
             return ImageData(
                 image_id=str(image.id),
                 sha256=image.sha256,
-                base64=image.base64_data.decode('utf-8'),
+                base64=f"/api/image/{image.id}",  # API endpoint for serving image
                 w=image.width,
                 h=image.height
             )

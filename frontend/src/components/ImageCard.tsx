@@ -1,5 +1,6 @@
 import React from 'react';
 import type { ImageData } from '../api/types';
+import { getImageUrl } from '../api/client';
 
 interface ImageCardProps {
   image: ImageData;
@@ -30,7 +31,7 @@ export const ImageCard: React.FC<ImageCardProps> = ({
     >
       <div className="aspect-square overflow-hidden rounded-lg bg-gray-100">
         <img
-          src={image.base64}
+          src={getImageUrl(image.base64)}
           alt={title}
           className="w-full h-full object-cover transition-transform hover:scale-105"
           loading="lazy"
