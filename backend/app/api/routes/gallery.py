@@ -41,15 +41,15 @@ async def get_gallery_images(
     
     images = [
         ImageResponse(
-            image_id=str(img.id),
+            image_id=img.sha256,  # Use SHA256 as ID
             sha256=img.sha256,
-            file_path=img.file_path,
-            mime_type=img.mime_type,
+            file_path=getattr(img, 'file_path', ''),  # May not be available
+            mime_type=getattr(img, 'mime_type', 'unknown'),
             likes=img.likes,
             unlikes=img.unlikes,
             skips=img.skips,
             exposures=img.exposures,
-            base64_data=f"/api/image/{img.id}",  # Image serving endpoint
+            base64_data=f"/api/image/{img.sha256}",  # SHA256-based serving
             created_at=img.created_at.isoformat()
         ) for img in result["images"]
     ]

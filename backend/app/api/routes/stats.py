@@ -4,12 +4,16 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ...core.database import get_db
 from ...services.choice_service import ChoiceService
+from ...services.directory_service import DirectoryService
+from ...utils.image_utils import get_sha256_hash
 
 router = APIRouter()
 
 
 class ImageStats(BaseModel):
+    image_id: str
     sha256: str
+    file_path: str
     likes: int
     unlikes: int
     skips: int
@@ -27,12 +31,40 @@ class StatsResponse(BaseModel):
 async def get_stats(db: Session = Depends(get_db)):
     """Get application statistics."""
     service = ChoiceService(db)
+    directory_service = DirectoryService(db)
     stats_data = service.get_stats()
     
-    # Convert by_image data to Pydantic models
-    by_image_stats = [
-        ImageStats(**image_data) for image_data in stats_data["by_image"]
-    ]
+    # Get all images from current directory
+    image_files = directory_service.scan_directory_images()
+    
+    # Create mapping of SHA256 to file paths for images in current directory
+    directory_images = {}
+    for file_path in image_files:
+        try:
+            sha256 = get_sha256_hash(file_path)
+            directory_images[sha256] = file_path
+        except Exception:
+            continue
+    
+    # Convert by_image data to Pydantic models with file paths
+    by_image_stats = []
+    for image_data in stats_data["by_image"]:
+        sha256 = image_data["sha256"]
+        file_path = directory_images.get(sha256, "")
+        
+        # Only include images that exist in current directory
+        if file_path:
+            by_image_stats.append(
+                ImageStats(
+                    image_id=sha256,  # Use SHA256 as image_id
+                    sha256=sha256,
+                    file_path=file_path,
+                    likes=image_data["likes"],
+                    unlikes=image_data["unlikes"],
+                    skips=image_data["skips"],
+                    exposures=image_data["exposures"]
+                )
+            )
     
     return StatsResponse(
         images=stats_data["images"],
