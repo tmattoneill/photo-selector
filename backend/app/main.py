@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .core.config import settings
-from .api.routes import health, ingest, pair, choice, stats
+from .api.routes import health, ingest, pair, choice, stats, gallery, portfolio
 
 app = FastAPI(
     title="Image Preference Picker API",
@@ -24,6 +24,8 @@ app.include_router(ingest.router, prefix=settings.api_prefix, tags=["ingest"])
 app.include_router(pair.router, prefix=settings.api_prefix, tags=["pair"])
 app.include_router(choice.router, prefix=settings.api_prefix, tags=["choice"])
 app.include_router(stats.router, prefix=settings.api_prefix, tags=["stats"])
+app.include_router(gallery.router, prefix=settings.api_prefix, tags=["gallery"])
+app.include_router(portfolio.router, prefix=settings.api_prefix, tags=["portfolio"])
 
 
 @app.get("/")

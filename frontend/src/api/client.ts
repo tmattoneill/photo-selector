@@ -6,6 +6,12 @@ import type {
   IngestRequest,
   IngestResponse,
   StatsResponse,
+  GalleryResponse,
+  GalleryFilter,
+  CreatePortfolioRequest,
+  PortfolioResponse,
+  ExportPortfolioRequest,
+  ExportResponse,
 } from './types';
 
 const BASE_URL = 'http://localhost:8000/api';
@@ -38,6 +44,28 @@ export const apiClient = {
 
   async getStats(): Promise<StatsResponse> {
     const response = await api.get('/stats');
+    return response.data;
+  },
+
+  async getGalleryImages(filter: GalleryFilter, limit: number = 20, offset: number = 0): Promise<GalleryResponse> {
+    const response = await api.get('/gallery', {
+      params: { filter, limit, offset }
+    });
+    return response.data;
+  },
+
+  async createPortfolio(request: CreatePortfolioRequest): Promise<PortfolioResponse> {
+    const response = await api.post('/portfolio', request);
+    return response.data;
+  },
+
+  async getPortfolio(portfolioId: string): Promise<PortfolioResponse> {
+    const response = await api.get(`/portfolio/${portfolioId}`);
+    return response.data;
+  },
+
+  async exportPortfolio(portfolioId: string, request: ExportPortfolioRequest): Promise<ExportResponse> {
+    const response = await api.post(`/portfolio/${portfolioId}/export`, request);
     return response.data;
   },
 };

@@ -90,6 +90,9 @@ export const Home: React.FC = () => {
               <Link to="/stats" className="btn-secondary inline-block">
                 View Stats
               </Link>
+              <Link to="/gallery" className="btn-secondary inline-block">
+                View Gallery
+              </Link>
             </div>
           </div>
         </div>
@@ -108,9 +111,14 @@ export const Home: React.FC = () => {
             <p className="text-gray-600 mb-6">
               Please ingest a directory containing images to start comparing.
             </p>
-            <Link to="/stats" className="btn-secondary inline-block">
-              View Stats
-            </Link>
+            <div className="space-x-4">
+              <Link to="/stats" className="btn-secondary inline-block">
+                View Stats
+              </Link>
+              <Link to="/gallery" className="btn-secondary inline-block">
+                View Gallery
+              </Link>
+            </div>
           </div>
         </div>
       </div>
@@ -123,12 +131,20 @@ export const Home: React.FC = () => {
       
       {/* Navigation */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-        <Link
-          to="/stats"
-          className="inline-flex items-center text-blue-600 hover:text-blue-800 text-sm font-medium"
-        >
-          📊 View Statistics
-        </Link>
+        <div className="flex items-center space-x-6">
+          <Link
+            to="/stats"
+            className="inline-flex items-center text-blue-600 hover:text-blue-800 text-sm font-medium"
+          >
+            📊 View Statistics
+          </Link>
+          <Link
+            to="/gallery"
+            className="inline-flex items-center text-blue-600 hover:text-blue-800 text-sm font-medium"
+          >
+            🖼️ View Gallery
+          </Link>
+        </div>
       </div>
 
       {/* Main Content */}

@@ -52,3 +52,51 @@ export interface StatsResponse {
 }
 
 export type Selection = 'LEFT' | 'RIGHT' | 'SKIP';
+
+// Gallery types
+export interface GalleryImage {
+  image_id: string;
+  sha256: string;
+  file_path: string;
+  likes: number;
+  unlikes: number;
+  skips: number;
+  exposures: number;
+  base64_data: string;
+  created_at: string;
+}
+
+export interface GalleryResponse {
+  images: GalleryImage[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+export type GalleryFilter = 'liked' | 'skipped';
+
+// Portfolio types
+export interface CreatePortfolioRequest {
+  name: string;
+  description?: string;
+  image_ids: string[];
+}
+
+export interface PortfolioResponse {
+  portfolio_id: string;
+  name: string;
+  description?: string;
+  image_count: number;
+  created_at: string;
+}
+
+export interface ExportPortfolioRequest {
+  directory_path: string;
+}
+
+export interface ExportResponse {
+  success: boolean;
+  exported_count: number;
+  export_path: string;
+  message: string;
+}

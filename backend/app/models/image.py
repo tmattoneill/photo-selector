@@ -33,6 +33,7 @@ class Image(Base):
     # Relationships
     canonical = relationship("Image", remote_side=[id])
     duplicates = relationship("Image", back_populates="canonical")
+    portfolios = relationship("Portfolio", secondary="portfolio_images", back_populates="images")
     
     __table_args__ = (
         CheckConstraint(

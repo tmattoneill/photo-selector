@@ -70,6 +70,7 @@ vite.config.js.timestamp-*
 /data/images_base64/
 /data/tmp/
 /uploads/
+samples/*
 
 # ---- Misc ----
 *.bak
