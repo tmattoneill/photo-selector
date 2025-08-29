@@ -14,5 +14,5 @@ class User(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     created_at = Column(DateTime, default=datetime.utcnow)
     
-    # Relationships
-    portfolios = relationship("Portfolio", back_populates="user")
+    # Relationships - temporarily disabled for new architecture
+    # portfolios = relationship("Portfolio", back_populates="user")

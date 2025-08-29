@@ -14,28 +14,22 @@ class ChoiceService:
     
     def get_stats(self) -> Dict[str, Any]:
         """Get comprehensive statistics."""
-        # Count canonical images
-        canonical_stmt = select(func.count(Image.id)).where(Image.is_canonical == True)
-        images_count = self.db.execute(canonical_stmt).scalar()
+        # Count all images (no duplicates in new model - SHA256 is unique)
+        images_stmt = select(func.count(Image.sha256))
+        images_count = self.db.execute(images_stmt).scalar()
         
-        # Count duplicates
-        duplicate_stmt = select(func.count(Image.id)).where(Image.is_canonical == False)
-        duplicates_count = self.db.execute(duplicate_stmt).scalar()
-        
-        # Count total rounds (choices)
+        # Count total rounds (choices) 
         rounds_stmt = select(func.count(Choice.id))
         rounds_count = self.db.execute(rounds_stmt).scalar()
         
         # Per-image statistics
-        images_stmt = select(Image).where(Image.is_canonical == True)
+        images_stmt = select(Image)
         images = list(self.db.execute(images_stmt).scalars().all())
         
         by_image = []
         for image in images:
             by_image.append({
-                "image_id": str(image.id),
                 "sha256": image.sha256,
-                "file_path": image.file_path,
                 "likes": image.likes,
                 "unlikes": image.unlikes,
                 "skips": image.skips,
@@ -44,7 +38,7 @@ class ChoiceService:
         
         return {
             "images": images_count or 0,
-            "duplicates": duplicates_count or 0,
+            "duplicates": 0,  # No duplicates in new architecture
             "rounds": rounds_count or 0,
             "by_image": by_image
         }

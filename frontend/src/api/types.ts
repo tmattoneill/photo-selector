@@ -1,5 +1,4 @@
 export interface ImageData {
-  image_id: string;
   sha256: string;
   base64: string;
   w: number;
@@ -14,8 +13,8 @@ export interface PairResponse {
 
 export interface ChoiceRequest {
   round: number;
-  left_id: string;
-  right_id: string;
+  left_sha256: string;
+  right_sha256: string;
   selection: 'LEFT' | 'RIGHT' | 'SKIP';
 }
 
@@ -24,14 +23,14 @@ export interface ChoiceResponse {
   next_round: number;
 }
 
-export interface IngestRequest {
+export interface DirectoryRequest {
   dir: string;
 }
 
-export interface IngestResponse {
-  ingested: number;
-  duplicates: number;
-  existing: number;
+export interface DirectoryResponse {
+  directory: string;
+  image_count: number;
+  message: string;
 }
 
 export interface ImageStats {

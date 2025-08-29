@@ -9,9 +9,7 @@ router = APIRouter()
 
 
 class ImageStats(BaseModel):
-    image_id: str
     sha256: str
-    file_path: str
     likes: int
     unlikes: int
     skips: int

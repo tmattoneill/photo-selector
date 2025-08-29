@@ -2,34 +2,40 @@ import os
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import select
 from ...core.database import get_db
-from ...models.image import Image
+from ...services.directory_service import DirectoryService
+from ...utils.image_utils import get_mime_type
 
 router = APIRouter()
 
 
-@router.get("/image/{image_id}")
-async def serve_image(image_id: str, db: Session = Depends(get_db)):
-    """Serve image file directly from filesystem."""
+@router.get("/image/{sha256}")
+async def serve_image(sha256: str, db: Session = Depends(get_db)):
+    """Serve image file directly from filesystem using SHA256."""
     try:
-        # Get image record
-        stmt = select(Image).where(Image.id == image_id)
-        image = db.execute(stmt).scalar_one_or_none()
+        service = DirectoryService(db)
         
-        if not image:
-            raise HTTPException(status_code=404, detail="Image not found")
+        # Find file in current directory by SHA256
+        file_path = service.find_file_by_sha256(sha256)
         
-        # Check if file exists
-        if not os.path.exists(image.file_path):
+        if not file_path:
+            raise HTTPException(status_code=404, detail="Image not found in current directory")
+        
+        # Check if file still exists
+        if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail="Image file not found on disk")
+        
+        # Get MIME type
+        mime_type = get_mime_type(file_path)
         
         # Return file directly
         return FileResponse(
-            path=image.file_path,
-            media_type=image.mime_type,
-            filename=os.path.basename(image.file_path)
+            path=file_path,
+            media_type=mime_type,
+            filename=os.path.basename(file_path)
         )
     
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to serve image: {str(e)}")

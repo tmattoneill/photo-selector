@@ -10,7 +10,6 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://user:password@localhost:5432/picker"
     
     # Image processing
-    image_root: str = "/absolute/path/to/images"
     max_image_mb: int = 8
     supported_formats: tuple = ("jpg", "jpeg", "png", "webp", "heic")
     

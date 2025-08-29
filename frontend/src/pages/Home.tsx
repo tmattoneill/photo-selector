@@ -35,8 +35,8 @@ export const Home: React.FC = () => {
       try {
         await apiClient.submitChoice({
           round: pair.round,
-          left_id: pair.left.image_id,
-          right_id: pair.right.image_id,
+          left_sha256: pair.left.sha256,
+          right_sha256: pair.right.sha256,
           selection,
         });
 

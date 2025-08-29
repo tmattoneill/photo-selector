@@ -20,9 +20,9 @@ export const Header: React.FC<HeaderProps> = ({ totalRounds, onDirectoryChange }
 
     setIsIngesting(true);
     try {
-      const result = await apiClient.ingestDirectory({ dir: directoryPath });
+      const result = await apiClient.setDirectory({ dir: directoryPath });
       setMessage({
-        text: `Ingested ${result.ingested} new images, ${result.duplicates} duplicates found, ${result.existing} already existed`,
+        text: result.message,
         type: 'success',
       });
       setShowDirectoryInput(false);
@@ -30,7 +30,7 @@ export const Header: React.FC<HeaderProps> = ({ totalRounds, onDirectoryChange }
       onDirectoryChange?.();
     } catch (error) {
       setMessage({
-        text: error instanceof Error ? error.message : 'Failed to ingest directory',
+        text: error instanceof Error ? error.message : 'Failed to set directory',
         type: 'error',
       });
     } finally {
@@ -84,7 +84,7 @@ export const Header: React.FC<HeaderProps> = ({ totalRounds, onDirectoryChange }
                   disabled={isIngesting}
                   className="btn-primary text-sm"
                 >
-                  {isIngesting ? 'Ingesting...' : 'Ingest'}
+                  {isIngesting ? 'Setting...' : 'Set Directory'}
                 </button>
                 <button
                   onClick={() => {

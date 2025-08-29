@@ -3,8 +3,8 @@ import type {
   PairResponse,
   ChoiceRequest,
   ChoiceResponse,
-  IngestRequest,
-  IngestResponse,
+  DirectoryRequest,
+  DirectoryResponse,
   StatsResponse,
   GalleryResponse,
   GalleryFilter,
@@ -43,8 +43,8 @@ export const apiClient = {
     return response.data;
   },
 
-  async ingestDirectory(request: IngestRequest): Promise<IngestResponse> {
-    const response = await api.post('/ingest', request);
+  async setDirectory(request: DirectoryRequest): Promise<DirectoryResponse> {
+    const response = await api.post('/directory', request);
     return response.data;
   },
 
