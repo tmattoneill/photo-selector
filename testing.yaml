@@ -1,0 +1,225 @@
+spec_version: 1
+name: "Image Duel Engine — Test Runner + CI"
+intent: |
+  Configure, run, and continuously validate the Image Duel Engine tests (Steps 1–3).
+  The tests live in ZIPs under ./testing and target a running HTTP API by default.
+  Optionally, run in "import mode" if a local Python module exposes `engine_api.get_pair()`
+  and `engine_api.post_choice()` shims.
+
+# =========================
+# Baseline runner (recap)
+# =========================
+env:
+  BASE_URL: "http://localhost:6500/api"           # change for your backend
+  TEST_IMAGE_DIR: "/samples"       # 20+ images recommended
+  TEST_PERF: "0"                                   # set "1" to enable perf tests
+  PYTHON: "python3"                                # override if needed
+
+paths:
+  testing_dir: "./testing"
+  venv_dir: ".venv"
+  out_dir: "./image_duel_tests"                    # unzip target
+
+zips:
+  - "image_duel_tests_step1.zip"
+  - "image_duel_tests_step2.zip"
+  - "image_duel_tests_step3.zip"
+
+steps:
+  - id: setup
+    shell:
+      - '{{ env.PYTHON }} -m venv {{ paths.venv_dir }}'
+      - 'source {{ paths.venv_dir }}/bin/activate'
+      - 'pip install --upgrade pip'
+      - 'pip install pytest requests python-dotenv'
+      - 'mkdir -p {{ paths.out_dir }}'
+      - 'cd {{ paths.out_dir }} && for z in {{ paths.testing_dir }}/image_duel_tests_step*.zip; do unzip -o "$z"; done && cd -'
+      - 'ls -la {{ paths.out_dir }}'
+    assertions:
+      - 'test -f {{ paths.out_dir }}/test_smoke_api.py'
+      - 'test -f {{ paths.out_dir }}/test_gallery_api.py'
+
+  - id: run-http
+    description: "Run pytest against HTTP API."
+    shell:
+      - 'source {{ paths.venv_dir }}/bin/activate'
+      - 'export BASE_URL="{{ env.BASE_URL }}"'
+      - 'export TEST_IMAGE_DIR="{{ env.TEST_IMAGE_DIR }}"'
+      - 'export TEST_PERF="{{ env.TEST_PERF }}"'
+      - 'cd {{ paths.out_dir }} && pytest -q'
+    failure_triage:
+      - match: "ECONNREFUSED|ConnectionError|Read timed out"
+        hint: "Backend not reachable at BASE_URL. Start the server or update BASE_URL."
+      - match: "Winner's mu did not increase"
+        hint: "Check Elo signs/K-factor/expected score formula."
+      - match: "A skipped image did not resurface"
+        hint: "Verify skip cooldown 11–49 rounds and ~30% reinjection."
+
+# ===========================================
+# Optional: Import Mode (no HTTP, direct Py)
+# ===========================================
+import_mode:
+  description: |
+    If your backend exposes a pure-Python shim `engine_api` with:
+      - get_pair() -> { round, left_sha256, right_sha256, meta: {left:{mu,sigma,exposures}, right:{...}}, ... }
+      - post_choice(round:int, left_sha256:str, right_sha256:str, outcome:Literal["LEFT","RIGHT","SKIP"]) -> {ok: true}
+    The tests auto-detect `engine_api` and will short-circuit HTTP. To enable:
+      1) Ensure `engine_api.py` is importable on PYTHONPATH (e.g., project root).
+      2) Keep the same public shapes as the HTTP JSON payloads.
+  runner:
+    shell:
+      - 'source {{ paths.venv_dir }}/bin/activate'
+      - 'export PYTHONPATH="$PYTHONPATH:$(pwd)"'
+      - 'cd {{ paths.out_dir }} && pytest -q'
+
+# =========================
+# Makefile for convenience
+# =========================
+makefile: |
+  PY?=python3
+  VENV?=.venv
+  OUT?=image_duel_tests
+  TESTING?=./testing
+
+  .PHONY: setup test test-perf import clean
+
+  setup:
+	$(PY) -m venv $(VENV)
+	. $(VENV)/bin/activate && pip install --upgrade pip && pip install pytest requests python-dotenv
+	mkdir -p $(OUT)
+	cd $(OUT) && for z in $(TESTING)/image_duel_tests_step*.zip; do unzip -o "$$z"; done
+
+  test:
+	@if [ -z "$$BASE_URL" ] || [ -z "$$TEST_IMAGE_DIR" ]; then echo "Set BASE_URL and TEST_IMAGE_DIR"; exit 1; fi
+	. $(VENV)/bin/activate && export TEST_PERF=0 && cd $(OUT) && pytest -q
+
+  test-perf:
+	@if [ -z "$$BASE_URL" ] || [ -z "$$TEST_IMAGE_DIR" ]; then echo "Set BASE_URL and TEST_IMAGE_DIR"; exit 1; fi
+	. $(VENV)/bin/activate && export TEST_PERF=1 && cd $(OUT) && pytest -q
+
+  import:
+	. $(VENV)/bin/activate && export PYTHONPATH=$$PYTHONPATH:$(PWD) && cd $(OUT) && pytest -q
+
+  clean:
+	rm -rf $(VENV) $(OUT)
+
+# =========================
+# GitHub Actions workflow
+# =========================
+ci:
+  github_actions:
+    filename: ".github/workflows/engine-tests.yml"
+    yaml: |
+      name: image-duel-engine-tests
+
+      on:
+        push:
+          branches: [ main, master ]
+        pull_request:
+          branches: [ main, master ]
+        workflow_dispatch:
+          inputs:
+            run_perf:
+              description: "Enable perf sanity tests"
+              required: false
+              default: "false"
+              type: choice
+              options: ["false","true"]
+
+      jobs:
+        tests:
+          runs-on: ubuntu-latest
+          strategy:
+            matrix:
+              python-version: ["3.10", "3.11", "3.12"]
+          env:
+            # Customize these for your CI environment
+            BASE_URL: "http://localhost:6500/api"
+            TEST_IMAGE_DIR: "${{ github.workspace }}/sample_images"
+            TEST_PERF: "${{ github.event.inputs.run_perf == 'true' && '1' || '0' }}"
+          steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Set up Python ${{ matrix.python-version }}
+              uses: actions/setup-python@v5
+              with:
+                python-version: ${{ matrix.python-version }}
+                cache: 'pip'
+
+            - name: Prepare sample images (if you don’t mount a real set)
+              run: |
+                mkdir -p sample_images
+                # Put 20+ small images here in real CI. As a placeholder we create empties.
+                # Recommended: vendor a small test subset or fetch from a test fixture bucket.
+                for i in $(seq 1 25); do convert -size 64x64 xc:gray "$PWD/sample_images/img_$i.png"; done
+              shell: bash
+            - name: Install system deps for ImageMagick (convert)
+              run: sudo apt-get update && sudo apt-get install -y imagemagick
+
+            - name: Create venv and install deps
+              run: |
+                python -m venv .venv
+                source .venv/bin/activate
+                pip install --upgrade pip
+                pip install pytest requests python-dotenv
+
+            - name: Unzip tests
+              run: |
+                mkdir -p image_duel_tests
+                for z in testing/image_duel_tests_step*.zip; do unzip -o "$z" -d image_duel_tests; done
+
+            - name: Start backend (example placeholder)
+              if: false
+              run: |
+                # Replace this with your real compose up or server launch
+                docker compose up -d
+                sleep 5
+
+            - name: Run tests (HTTP mode)
+              env:
+                BASE_URL: ${{ env.BASE_URL }}
+                TEST_IMAGE_DIR: ${{ env.TEST_IMAGE_DIR }}
+                TEST_PERF: ${{ env.TEST_PERF }}
+              run: |
+                source .venv/bin/activate
+                cd image_duel_tests
+                pytest -q --junitxml=../junit-${{ matrix.python-version }}.xml
+
+            - name: Upload JUnit
+              uses: actions/upload-artifact@v4
+              with:
+                name: junit-${{ matrix.python-version }}
+                path: junit-${{ matrix.python-version }}.xml
+
+        # Optional second job: Import mode against a local module (disabled by default)
+        import_mode:
+          if: false
+          runs-on: ubuntu-latest
+          steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-python@v5
+              with:
+                python-version: "3.11"
+                cache: 'pip'
+            - run: |
+                python -m venv .venv
+                source .venv/bin/activate
+                pip install --upgrade pip
+                pip install pytest requests python-dotenv
+                mkdir -p image_duel_tests
+                for z in testing/image_duel_tests_step*.zip; do unzip -o "$z" -d image_duel_tests; done
+                # Ensure engine_api.py is present at repo root or adjust PYTHONPATH here
+                export PYTHONPATH=$PYTHONPATH:$PWD
+                cd image_duel_tests
+                pytest -q --junitxml=../junit-import.xml
+            - uses: actions/upload-artifact@v4
+              with:
+                name: junit-import
+                path: junit-import.xml
+notes:
+  - In CI, either point `BASE_URL` at a service started in the workflow
+    (e.g., `docker compose up`) or run in import mode by exposing `engine_api.py`.
+  - The sample image generation with `convert` is a placeholder; replace with a real fixture set.
+  - Stability tests expect learning over ~300+ rounds; keep CI backend stateful across the job or
+    pre-warm with a short script if needed.
