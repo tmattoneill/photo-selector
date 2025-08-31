@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ...core.database import get_db
-from ...services.directory_choice_service import DirectoryChoiceService
+from ...services.pairing_service import PairingService
 
 router = APIRouter()
 
@@ -24,7 +24,7 @@ async def record_choice(
     request: ChoiceRequest,
     db: Session = Depends(get_db)
 ):
-    """Record user choice between two images identified by SHA256."""
+    """Record user choice between two images identified by SHA256 using Elo+σ algorithm."""
     try:
         # Validate selection
         if request.selection not in ["LEFT", "RIGHT", "SKIP"]:
@@ -33,19 +33,18 @@ async def record_choice(
                 detail="Selection must be 'LEFT', 'RIGHT', or 'SKIP'"
             )
         
-        # Record the choice using directory-based service
-        choice_service = DirectoryChoiceService(db)
-        user_id = choice_service.ensure_default_user()
+        # Record the choice using PairingService per algo-update.yaml spec
+        pairing_service = PairingService(db)
         
-        next_round = choice_service.record_choice(
+        result = pairing_service.record_choice(
+            round_num=request.round,
             left_sha256=request.left_sha256,
             right_sha256=request.right_sha256,
-            selection=request.selection,
-            user_id=user_id,
-            round_num=request.round
+            outcome=request.selection
         )
         
-        return ChoiceResponse(saved=True, next_round=next_round)
+        # Return success with incremented round
+        return ChoiceResponse(saved=True, next_round=request.round + 1)
     
     except HTTPException:
         raise
