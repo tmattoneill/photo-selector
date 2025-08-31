@@ -1,0 +1,63 @@
+ImagesTable:
+  description: >
+    PostgreSQL schema for storing image binaries as BYTEA, keyed by SHA-256.
+    Supports fast 'latest by filename' lookups via a composite index.
+  table: images
+  columns:
+    sha256:
+      type: text
+      not_null: true
+      primary_key: true
+      comment: 64-char lowercase hex digest of raw image bytes
+    img_filename:
+      type: text
+      not_null: true
+      comment: Original filename at ingestion (may change on upsert)
+    img_bytes:
+      type: bytea
+      not_null: true
+      comment: Raw image bytes (binary payload)
+    created_at:
+      type: timestamptz
+      not_null: true
+      default: now()
+      comment: Server-side insertion timestamp
+  indexes:
+    - name: idx_images_filename_created_at
+      using: btree
+      columns: [img_filename, created_at DESC]
+      purpose: Fast "latest by filename" queries
+  constraints:
+    - name: chk_sha256_hex
+      type: check
+      expression: "sha256 ~ '^[0-9a-f]{64}$'"
+  upsert_policy:
+    conflict_target: sha256
+    on_conflict: update
+    set:
+      img_filename: EXCLUDED.img_filename
+    note: Payload remains immutable because sha256 is derived from content
+  sample_sql:
+    create: |
+      CREATE TABLE IF NOT EXISTS images (
+        sha256       TEXT PRIMARY KEY,
+        img_filename TEXT NOT NULL,
+        img_bytes    BYTEA NOT NULL,
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT chk_sha256_hex CHECK (sha256 ~ '^[0-9a-f]{64}$')
+      );
+      CREATE INDEX IF NOT EXISTS idx_images_filename_created_at
+        ON images (img_filename, created_at DESC);
+    upsert: |
+      INSERT INTO images (sha256, img_filename, img_bytes)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (sha256)
+      DO UPDATE SET img_filename = EXCLUDED.img_filename;
+    select_by_sha256: |
+      SELECT img_bytes FROM images WHERE sha256 = $1;
+    select_latest_by_filename: |
+      SELECT img_bytes
+      FROM images
+      WHERE img_filename = $1
+      ORDER BY created_at DESC
+      LIMIT 1;

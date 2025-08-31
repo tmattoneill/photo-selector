@@ -1,32 +1,21 @@
-import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, CheckConstraint
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, text, Index
 from ..core.database import Base
 
 
 class Choice(Base):
-    """User choice between two images identified by SHA256."""
+    """User choice between two images as per algo-update.yaml spec."""
     
     __tablename__ = "choices"
     
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    round = Column(Integer, nullable=False, index=True)
-    left_sha256 = Column(String(64), ForeignKey("images.sha256"), nullable=False)
-    right_sha256 = Column(String(64), ForeignKey("images.sha256"), nullable=False)
-    selection = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # Relationships
-    user = relationship("User")
-    left_image = relationship("Image", foreign_keys=[left_sha256])
-    right_image = relationship("Image", foreign_keys=[right_sha256])
+    id = Column(Integer, primary_key=True, autoincrement=True)  # BIGSERIAL equivalent
+    round = Column(Integer, nullable=False)
+    left_sha256 = Column(String(64), ForeignKey("images.sha256", ondelete="CASCADE"), nullable=False)
+    right_sha256 = Column(String(64), ForeignKey("images.sha256", ondelete="CASCADE"), nullable=False)
+    winner_sha256 = Column(String(64), nullable=True)  # NULL if skipped
+    skipped = Column(Boolean, nullable=False, default=False, server_default=text('false'))
+    decided_at = Column(DateTime, nullable=False, default=datetime.utcnow, server_default=text('NOW()'))
     
     __table_args__ = (
-        CheckConstraint(
-            "selection IN ('LEFT', 'RIGHT', 'SKIP')",
-            name="selection_constraint"
-        ),
+        Index('idx_choices_round', 'round'),
     )

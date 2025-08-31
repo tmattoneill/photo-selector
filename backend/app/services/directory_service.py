@@ -1,261 +1,236 @@
 import os
-import random
-from typing import List, Tuple, Optional, Dict
+import hashlib
+import concurrent.futures
+from typing import Dict, Optional, List, Set
+from pathlib import Path
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, text
 from ..models.app_state import AppState
 from ..models.image import Image
-from ..utils.image_utils import get_sha256_hash, is_supported_image, get_image_dimensions, get_mime_type
-from ..core.config import settings
 
 
 class DirectoryService:
-    """Service for directory-based image operations."""
+    """Directory service with SHA-256 caching as per algo-update.yaml spec."""
     
     def __init__(self, db: Session):
         self.db = db
+        self.cache: Dict[str, Dict[str, any]] = {}  # sha256 -> {path, size, mtime}
+        self.root_directory: Optional[str] = None
+        self.supported_extensions = [".jpg", ".jpeg", ".png", ".webp", ".gif"]
+        self.max_workers = 4
+        self.chunk_size = 1048576  # 1 MB chunks
+        self.max_total_files = 200_000
+        self.max_file_size_mb = 250
     
-    def get_current_directory(self) -> Optional[str]:
-        """Get the currently selected directory."""
-        stmt = select(AppState).where(AppState.key == "current_directory")
-        state = self.db.execute(stmt).scalar_one_or_none()
+    def set_root_directory(self, root: str) -> Dict[str, any]:
+        """Validate and set root directory, then scan for images."""
+        if not os.path.exists(root):
+            raise ValueError(f"Directory does not exist: {root}")
         
-        if state and "directory" in state.val:
-            return state.val["directory"]
-        return None
+        if not os.path.isdir(root):
+            raise ValueError(f"Path is not a directory: {root}")
+        
+        if not os.access(root, os.R_OK):
+            raise ValueError(f"Directory not readable: {root}")
+        
+        self.root_directory = os.path.abspath(root)
+        discovered = self.scan_and_sync()
+        
+        return {"ok": True, "discovered": discovered}
     
-    def scan_directory_images(self) -> List[str]:
-        """Scan current directory for supported images."""
-        directory = self.get_current_directory()
-        if not directory:
-            return []
+    def scan_and_sync(self) -> int:
+        """Scan directory recursively and sync with database."""
+        if not self.root_directory:
+            return 0
         
+        # Find all image files
+        image_files = self._find_image_files()
+        
+        if len(image_files) > self.max_total_files:
+            raise ValueError(f"Too many files: {len(image_files)} > {self.max_total_files}")
+        
+        # Hash files in parallel
+        new_cache = self._hash_files_parallel(image_files)
+        
+        # Update cache (invalidate changed files)
+        self._update_cache(new_cache)
+        
+        # Sync new SHA256s to database
+        discovered = self._sync_to_database()
+        
+        return discovered
+    
+    def _find_image_files(self) -> List[str]:
+        """Recursively find all supported image files."""
         image_files = []
-        for root, dirs, files in os.walk(directory):
+        
+        for root, dirs, files in os.walk(self.root_directory):
+            # Skip hidden directories
+            dirs[:] = [d for d in dirs if not d.startswith('.')]
+            
             for file in files:
+                if file.startswith('.'):  # Skip hidden files
+                    continue
+                    
+                # Check extension
+                file_lower = file.lower()
+                if not any(file_lower.endswith(ext) for ext in self.supported_extensions):
+                    continue
+                
                 file_path = os.path.join(root, file)
-                if is_supported_image(file_path, settings.supported_formats):
-                    image_files.append(file_path)
+                
+                # Check if it's a regular file and not a symlink
+                if not os.path.isfile(file_path) or os.path.islink(file_path):
+                    continue
+                
+                # Check file size
+                try:
+                    size = os.path.getsize(file_path)
+                    if size > self.max_file_size_mb * 1024 * 1024:
+                        continue
+                except OSError:
+                    continue
+                
+                image_files.append(file_path)
         
         return image_files
     
-    def get_image_pair_from_directory(self) -> Tuple[Optional[Dict], Optional[Dict], int]:
-        """
-        Get a pair of images from the current directory.
+    def _hash_files_parallel(self, files: List[str]) -> Dict[str, Dict[str, any]]:
+        """Hash files in parallel, reusing cache where possible."""
+        new_cache = {}
+        files_to_hash = []
         
-        Returns:
-            Tuple[left_image_data, right_image_data, current_round]
-            Each image_data contains: {sha256, file_path, width, height, mime_type}
-        """
-        # Get current round
-        current_round = self._get_current_round()
-        
-        # Get all images from directory
-        image_files = self.scan_directory_images()
-        if len(image_files) < 2:
-            return None, None, current_round
-        
-        # Get image stats from database for intelligent selection
-        image_stats = self._get_image_stats_by_files(image_files)
-        
-        # Update eligible skipped images
-        self._update_eligible_skipped_images(current_round)
-        
-        # Select pair using existing logic adapted for file-based approach
-        left_file, right_file = self._select_image_pair(image_files, image_stats, current_round)
-        
-        if not left_file or not right_file:
-            return None, None, current_round
-        
-        # Build image data with calculated SHA256
-        left_data = self._build_image_data(left_file)
-        right_data = self._build_image_data(right_file)
-        
-        return left_data, right_data, current_round
-    
-    def _build_image_data(self, file_path: str) -> Dict:
-        """Build image data dictionary from file path."""
-        sha256 = get_sha256_hash(file_path)
-        width, height = get_image_dimensions(file_path)
-        mime_type = get_mime_type(file_path)
-        
-        return {
-            "sha256": sha256,
-            "file_path": file_path,
-            "width": width,
-            "height": height,
-            "mime_type": mime_type
-        }
-    
-    def _get_image_stats_by_files(self, image_files: List[str]) -> Dict[str, Image]:
-        """Get image statistics mapped by SHA256."""
-        stats_by_sha256 = {}
-        
-        for file_path in image_files:
-            try:
-                sha256 = get_sha256_hash(file_path)
-                stmt = select(Image).where(Image.sha256 == sha256)
-                image_stats = self.db.execute(stmt).scalar_one_or_none()
-                if image_stats:
-                    stats_by_sha256[sha256] = image_stats
-            except Exception:
-                # Skip files that can't be processed
-                continue
-        
-        return stats_by_sha256
-    
-    def _select_image_pair(self, image_files: List[str], image_stats: Dict[str, Image], current_round: int) -> Tuple[Optional[str], Optional[str]]:
-        """Select two images using exposure-balanced logic."""
-        if len(image_files) < 2:
-            return None, None
-        
-        # Get previous round images to avoid repetition
-        previous_round_sha256s = self._get_previous_round_sha256s(current_round - 1)
-        
-        # Filter out previous round images
-        available_files = []
-        for file_path in image_files:
-            try:
-                sha256 = get_sha256_hash(file_path)
-                if sha256 not in previous_round_sha256s:
-                    available_files.append(file_path)
-            except Exception:
-                continue
-        
-        if len(available_files) < 2:
-            available_files = image_files  # Use all if too few available
-        
-        # Check for eligible skipped images (30% injection probability)
-        eligible_skipped = self._get_eligible_skipped_files(available_files, image_stats)
-        
-        if eligible_skipped and random.random() < 0.3:
-            # Inject one eligible skipped image
-            skipped_file = random.choice(eligible_skipped)
-            remaining_files = [f for f in available_files if f != skipped_file]
-            
-            if remaining_files:
-                other_file = self._select_by_exposure(remaining_files, image_stats, 1)[0]
-                
-                # Randomly assign left/right
-                if random.random() < 0.5:
-                    return skipped_file, other_file
-                else:
-                    return other_file, skipped_file
-        
-        # Normal selection by exposure
-        selected_files = self._select_by_exposure(available_files, image_stats, 2)
-        if len(selected_files) >= 2:
-            return selected_files[0], selected_files[1]
-        
-        return None, None
-    
-    def _select_by_exposure(self, files: List[str], image_stats: Dict[str, Image], count: int) -> List[str]:
-        """Select files preferring those with fewer exposures."""
-        if len(files) <= count:
-            return files
-        
-        # Group files by exposure count
-        exposure_groups = {}
         for file_path in files:
             try:
-                sha256 = get_sha256_hash(file_path)
-                exposure_count = 0
-                if sha256 in image_stats:
-                    exposure_count = image_stats[sha256].exposures
+                stat = os.stat(file_path)
+                size = stat.st_size
+                mtime = stat.st_mtime
                 
-                if exposure_count not in exposure_groups:
-                    exposure_groups[exposure_count] = []
-                exposure_groups[exposure_count].append(file_path)
-            except Exception:
-                continue
-        
-        selected = []
-        
-        # Select from lowest exposure groups first
-        for exposure_count in sorted(exposure_groups.keys()):
-            group = exposure_groups[exposure_count]
-            random.shuffle(group)
-            
-            for file_path in group:
-                if len(selected) < count:
-                    selected.append(file_path)
+                # Check if we can reuse cached hash
+                cached_entry = None
+                for sha256, cache_data in self.cache.items():
+                    if (cache_data["path"] == file_path and 
+                        cache_data["size"] == size and 
+                        cache_data["mtime"] == mtime):
+                        cached_entry = sha256
+                        break
+                
+                if cached_entry:
+                    # Reuse cached hash
+                    new_cache[cached_entry] = {
+                        "path": file_path,
+                        "size": size,
+                        "mtime": mtime
+                    }
                 else:
-                    break
+                    # Need to hash this file
+                    files_to_hash.append((file_path, size, mtime))
+                    
+            except OSError:
+                continue
+        
+        # Hash files that need hashing
+        if files_to_hash:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                hash_futures = {
+                    executor.submit(self._hash_file, file_path): (file_path, size, mtime)
+                    for file_path, size, mtime in files_to_hash
+                }
+                
+                for future in concurrent.futures.as_completed(hash_futures):
+                    file_path, size, mtime = hash_futures[future]
+                    try:
+                        sha256 = future.result()
+                        if sha256:
+                            new_cache[sha256] = {
+                                "path": file_path,
+                                "size": size,
+                                "mtime": mtime
+                            }
+                    except Exception:
+                        # Skip files that failed to hash
+                        continue
+        
+        return new_cache
+    
+    def _hash_file(self, file_path: str) -> Optional[str]:
+        """Compute SHA-256 hash of a file."""
+        try:
+            hasher = hashlib.sha256()
+            with open(file_path, 'rb') as f:
+                while True:
+                    chunk = f.read(self.chunk_size)
+                    if not chunk:
+                        break
+                    hasher.update(chunk)
+            return hasher.hexdigest()
+        except Exception:
+            return None
+    
+    def _update_cache(self, new_cache: Dict[str, Dict[str, any]]):
+        """Update the in-memory cache."""
+        # Remove entries for files no longer present
+        old_paths = {data["path"] for data in self.cache.values()}
+        new_paths = {data["path"] for data in new_cache.values()}
+        removed_paths = old_paths - new_paths
+        
+        if removed_paths:
+            # Remove cache entries for deleted files
+            to_remove = []
+            for sha256, data in self.cache.items():
+                if data["path"] in removed_paths:
+                    to_remove.append(sha256)
             
-            if len(selected) >= count:
-                break
+            for sha256 in to_remove:
+                del self.cache[sha256]
         
-        return selected[:count]
+        # Update cache with new data
+        self.cache = new_cache
     
-    def _get_eligible_skipped_files(self, available_files: List[str], image_stats: Dict[str, Image]) -> List[str]:
-        """Get files that are eligible for resurfacing."""
-        eligible = []
+    def _sync_to_database(self) -> int:
+        """Sync new SHA256s to database."""
+        existing_sha256s = set()
+        stmt = select(Image.sha256)
+        for row in self.db.execute(stmt):
+            existing_sha256s.add(row[0])
         
-        for file_path in available_files:
-            try:
-                sha256 = get_sha256_hash(file_path)
-                if sha256 in image_stats:
-                    stats = image_stats[sha256]
-                    if stats.next_eligible_round is None and stats.skips > 0:
-                        eligible.append(file_path)
-            except Exception:
-                continue
+        new_sha256s = set(self.cache.keys()) - existing_sha256s
         
-        return eligible
-    
-    def _update_eligible_skipped_images(self, current_round: int):
-        """Mark skipped images as eligible if their requeue round has passed."""
-        stmt = select(Image).where(
-            Image.next_eligible_round.isnot(None),
-            Image.next_eligible_round <= current_round
-        )
-        images_to_update = list(self.db.execute(stmt).scalars().all())
-        
-        for image in images_to_update:
-            image.next_eligible_round = None
-        
-        if images_to_update:
+        if new_sha256s:
+            # Insert new images with proper defaults
+            for sha256 in new_sha256s:
+                self.db.execute(
+                    text("""
+                        INSERT INTO images 
+                        (sha256, mu, sigma, exposures, likes, unlikes, skips, is_archived_hard_no) 
+                        VALUES (:sha256, 1500.0, 350.0, 0, 0, 0, 0, false)
+                        ON CONFLICT (sha256) DO NOTHING
+                    """),
+                    {"sha256": sha256}
+                )
+            
             self.db.commit()
+        
+        return len(new_sha256s)
     
-    def _get_previous_round_sha256s(self, round_num: int) -> set:
-        """Get SHA256s from a specific round."""
-        if round_num < 0:
-            return set()
-        
-        from ..models.choice import Choice
-        stmt = select(Choice.left_sha256, Choice.right_sha256).where(Choice.round == round_num)
-        results = self.db.execute(stmt).all()
-        
-        sha256s = set()
-        for left_sha256, right_sha256 in results:
-            sha256s.add(left_sha256)
-            sha256s.add(right_sha256)
-        
-        return sha256s
-    
-    def _get_current_round(self) -> int:
-        """Get the current round number."""
-        stmt = select(AppState).where(AppState.key == "current_round")
-        state = self.db.execute(stmt).scalar_one_or_none()
-        
-        if not state:
-            state = AppState(key="current_round", val={"current_round": 0})
-            self.db.add(state)
-            self.db.commit()
-            return 0
-        
-        return state.val.get("current_round", 0)
-    
-    def find_file_by_sha256(self, sha256: str) -> Optional[str]:
-        """Find file path in current directory by SHA256."""
-        image_files = self.scan_directory_images()
-        
-        for file_path in image_files:
-            try:
-                file_sha256 = get_sha256_hash(file_path)
-                if file_sha256 == sha256:
-                    return file_path
-            except Exception:
-                continue
-        
+    def get_path_by_sha256(self, sha256: str) -> Optional[str]:
+        """Get file path by SHA256 from cache."""
+        cache_entry = self.cache.get(sha256)
+        if cache_entry:
+            # Verify file still exists
+            path = cache_entry["path"]
+            if os.path.exists(path):
+                return path
         return None
+    
+    def get_all_sha256s(self) -> Set[str]:
+        """Get all SHA256s currently in cache."""
+        return set(self.cache.keys())
+    
+    def get_cache_info(self) -> Dict[str, any]:
+        """Get information about the current cache state."""
+        return {
+            "root_directory": self.root_directory,
+            "total_images": len(self.cache),
+            "cache_entries": len(self.cache)
+        }

@@ -1,0 +1,684 @@
+spec_version: 1
+engine_version: "duel-engine Elo+σ v1"
+project: "Image Preference Picker"
+intent: |
+  You are the code assistant for a production web app that helps users sift large photo sets
+  by showing TWO images at a time and recording ONE winner or a SKIP. Implement a robust,
+  testable, and efficient system that:
+    - Scans a user-specified directory in real time (no image blobs in DB)
+    - Hashes images (SHA-256) and manages canonical duplicates
+    - Schedules informative comparison pairs (unseen bias + exploration vs exploitation)
+    - Updates ratings online (Elo with uncertainty σ)
+    - Resurfaces skipped images after a randomized cooldown (11–49 rounds)
+    - Tracks “seen-all” coverage and a stable Top-K “good set”
+    - Creates named galleries from the current selection
+  Follow the constraints, schemas, endpoints, and algorithms below exactly.
+
+# =========================================================
+# 0) ARCHITECTURE OVERVIEW
+# =========================================================
+architecture:
+  storage_model: |
+    - Images live on disk under a user-provided root directory.
+    - Backend scans the directory, computes SHA-256 over raw bytes, and keeps an in-memory
+      map: sha256 -> absolute_path (plus basic metadata).
+    - Database stores ONLY metadata/stats/ratings and never stores raw image data.
+  key_components:
+    - DirectoryService:
+        responsibilities:
+          - Validate/set the active root directory
+          - Recursive scan for supported files (*.jpg, *.jpeg, *.png, *.webp, *.gif)
+          - Compute sha256 for each image (stable across runs)
+          - Maintain in-memory cache { sha256: { path, size, mtime } 
+          - Emit add/remove events on file system changes (optional future)
+        performance:
+          - Use incremental rescans with mtimes and size checks before re-hashing
+          - Parallel hashing with a worker pool (bounded)
+    - PairingService:
+        responsibilities:
+          - Expose GET /api/pair that yields a “good” pair per round
+          - Respect skip resurfacing windows, avoid recent duplicates, diversify exposure
+    - ChoiceService:
+        responsibilities:
+          - Record CHOOSE_LEFT/CHOOSE_RIGHT or SKIP
+          - Update Elo+σ, counters, exposures, and per-image last_seen/next_eligible_round
+    - GalleryService:
+        responsibilities:
+          - Build named galleries from rank/threshold policies
+          - Persist a snapshot (sha256 + rank) so galleries stay stable over time
+  thread_safety:
+    - Use DB transactions for choice writes (SERIALIZABLE or REPEATABLE READ).
+    - Serialize rating updates per pair; avoid concurrent writes to same images.
+
+# =========================================================
+# 1) DATABASE SCHEMA (Postgres)
+# =========================================================
+db:
+  schema:
+    images: |
+      CREATE TABLE IF NOT EXISTS images (
+        sha256 TEXT PRIMARY KEY,
+        mu      DOUBLE PRECISION NOT NULL DEFAULT 1500,
+        sigma   DOUBLE PRECISION NOT NULL DEFAULT 350,
+        exposures INTEGER NOT NULL DEFAULT 0,
+        likes     INTEGER NOT NULL DEFAULT 0,
+        unlikes   INTEGER NOT NULL DEFAULT 0,
+        skips     INTEGER NOT NULL DEFAULT 0,
+        last_seen_round INTEGER,
+        next_eligible_round INTEGER,   -- for skip resurfacing window
+        is_archived_hard_no BOOLEAN NOT NULL DEFAULT FALSE
+      );
+    choices: |
+      CREATE TABLE IF NOT EXISTS choices (
+        id BIGSERIAL PRIMARY KEY,
+        round INTEGER NOT NULL,
+        left_sha256  TEXT NOT NULL REFERENCES images(sha256) ON DELETE CASCADE,
+        right_sha256 TEXT NOT NULL REFERENCES images(sha256) ON DELETE CASCADE,
+        winner_sha256 TEXT,         -- NULL if skipped
+        skipped BOOLEAN NOT NULL DEFAULT FALSE,
+        decided_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_choices_round ON choices(round);
+    app_state: |
+      CREATE TABLE IF NOT EXISTS app_state (
+        id SMALLINT PRIMARY KEY CHECK (id = 1),
+        round INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT INTO app_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+    duplicates: |
+      CREATE TABLE IF NOT EXISTS duplicates (
+        duplicate_sha256 TEXT PRIMARY KEY REFERENCES images(sha256) ON DELETE CASCADE,
+        canonical_sha256 TEXT NOT NULL REFERENCES images(sha256) ON DELETE CASCADE,
+        CONSTRAINT dup_not_self CHECK (duplicate_sha256 <> canonical_sha256)
+      );
+    galleries: |
+      CREATE TABLE IF NOT EXISTS galleries (
+        id BIGSERIAL PRIMARY KEY,
+        name TEXT UNIQUE NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        selection_policy TEXT NOT NULL,           -- e.g., top_k / threshold_mu / threshold_ci / manual
+        selection_params JSONB NOT NULL,
+        duplicates_policy TEXT NOT NULL,          -- include_duplicates / collapse_to_canonical / exclude_duplicates
+        engine_version TEXT NOT NULL DEFAULT 'duel-engine Elo+σ v1',
+        app_round_at_creation INTEGER
+      );
+    gallery_images: |
+      CREATE TABLE IF NOT EXISTS gallery_images (
+        gallery_id BIGINT NOT NULL REFERENCES galleries(id) ON DELETE CASCADE,
+        sha256 TEXT NOT NULL REFERENCES images(sha256) ON DELETE CASCADE,
+        rank INTEGER NOT NULL,
+        PRIMARY KEY (gallery_id, sha256)
+      );
+  indexes:
+    - "CREATE INDEX IF NOT EXISTS idx_images_mu_sigma ON images(mu DESC, sigma ASC);"
+    - "CREATE INDEX IF NOT EXISTS idx_images_exposures ON images(exposures);"
+    - "CREATE INDEX IF NOT EXISTS idx_gallery_images_rank ON gallery_images(gallery_id, rank);"
+
+# =========================================================
+# 2) DIRECTORY SERVICE (SCAN & HASH)
+# =========================================================
+directory_service:
+  supported_extensions: [".jpg", ".jpeg", ".png", ".webp", ".gif"]
+  hashing:
+    algo: "sha256"
+    method: "hash raw bytes of the file"
+    chunk_size_bytes: 1048576  # 1 MB
+  scanning:
+    recursive: true
+    ignore_hidden: true
+    follow_symlinks: false
+    guards:
+      - max_total_files: 200_000
+      - max_file_size_mb: 250
+  cache:
+    structure: |
+      cache: Dict[str, { "path": str, "size": int, "mtime": float }]
+    invalidation: "on rescan, if (size, mtime) changed -> rehash & update cache"
+  db_sync:
+    - On first discovery of sha256: INSERT INTO images(sha256) VALUES ($sha256) ON CONFLICT DO NOTHING
+    - No filename/path in DB; path lives in in-memory cache only
+  endpoints:
+    - method: POST
+      path: /api/directory
+      body:
+        root: string  # absolute path
+      response: { ok: true, discovered: int }
+      rules:
+        - Validate path exists and readable
+        - Scan, hash, sync DB rows for new sha256s
+        - Remove cache entries for files no longer present (no DB delete)
+
+# =========================================================
+# 3) PAIRING ENGINE (DUEL SCHEDULER)
+# =========================================================
+pairing_engine:
+  rounds:
+    state: "app_state.round increments by 1 on every successful GET /api/pair"
+  fairness_bias:
+    exposure_weighting: "sample probability ∝ 1 / (1 + exposures)"
+    epsilon_greedy: 0.10   # 10% purely random pair to escape local optima
+    avoid_recent:
+      last_n_rounds: 12    # avoid reusing same images/pairs within this window
+  pools:
+    definitions:
+      UNSEEN: "exposures = 0"
+      ACTIVE: "exposures > 0 and NOT is_archived_hard_no and outside skip cooldown"
+      SKIPPED_ELIGIBLE: "next_eligible_round IS NOT NULL AND app_state.round >= next_eligible_round"
+      SKIPPED_COOLDOWN: "next_eligible_round IS NOT NULL AND app_state.round < next_eligible_round"
+  skip_resurfacing:
+    inject_probability: 0.30
+    on_skip_set_next_eligible_round: "current_round + randint(11, 49)"
+    clear_next_eligible_on_show: false   # only clear on choice, not on show
+  selection_strategy:
+    - If UNSEEN exists:
+        pick:
+          a: "one UNSEEN (weighted by low exposures; trivial here because exposures=0)"
+          b: "one ACTIVE with mu near median(mu) and high sigma"
+        reason: "rapidly seeds new items with informative comparisons"
+    - Else:
+        shortlist_k: 64
+        shortlist: "ACTIVE sorted by highest sigma first, then nearest mu to median"
+        choose_pair: "pair within shortlist that maximizes information gain: close mu, high σ"
+    - Then:
+        maybe_inject_skipped_eligible: "with probability = inject_probability, replace a or b"
+    - Guards:
+      - "Do not serve the same image on both sides."
+      - "Do not repeat the exact pair served within last_n_rounds."
+  api:
+    - method: GET
+      path: /api/pair
+      response:
+        round: int
+        left_sha256: string
+        right_sha256: string
+        left_url: "/api/image/{sha256}"
+        right_url: "/api/image/{sha256}"
+        meta:
+          left: { mu: float, sigma: float, exposures: int }
+          right: { mu: float, sigma: float, exposures: int }
+
+# =========================================================
+# 4) RATING MODEL (Elo + per-image σ)
+# =========================================================
+rating_model:
+  init:
+    mu: 1500
+    sigma: 350
+    sigma_min: 60
+  expected_score: "E(a) = 1 / (1 + 10^((mu_b - mu_a)/400))"
+  k_factor:
+    k_base: 24
+    sigma0: 350
+    clamp_min: 8
+    clamp_max: 48
+    formula: "K_i = clamp(k_base * (sigma_i / sigma0), clamp_min, clamp_max)"
+  update:
+    on_choice:
+      - if winner == left:
+          mu_left  += K_left  * (1 - E_left)
+          mu_right += K_right * (0 - (1 - E_left))
+        else if winner == right:
+          mu_left  += K_left  * (0 - E_left)
+          mu_right += K_right * (1 - (1 - E_left))
+      - for each i in {left,right}:
+          exposures += 1
+          sigma = max(sigma_min, sigma * 0.97)   # uncertainty shrinks on exposure
+      - likes/unlikes: increment winner.likes += 1, loser.unlikes += 1
+      - clear skip cooldowns for both images (set next_eligible_round = NULL)
+    on_skip:
+      - for each i in {left,right}:
+          skips += 1
+          next_eligible_round = current_round + randint(11, 49)
+      - no mu/sigma updates and no exposure increments
+  api:
+    - method: POST
+      path: /api/choice
+      body:
+        round: int
+        left_sha256: string
+        right_sha256: string
+        outcome: enum["LEFT","RIGHT","SKIP"]
+      response: { ok: true }
+      tx_rules:
+        - Validate round matches app_state.round of the served pair (or accept within small skew)
+        - Insert into choices
+        - Apply rating update atomically
+
+# =========================================================
+# 5) COVERAGE & “SEEN-ALL” (Requirement #1)
+# =========================================================
+coverage:
+  compute_each_round:
+    unseen_count: "COUNT(*) FROM images WHERE exposures = 0"
+    seen_count:   "COUNT(*) FROM images WHERE exposures > 0"
+  ui:
+    banner_on_complete: "Coverage complete — all images have been seen."
+  include_skips_as_seen: true
+
+# =========================================================
+# 6) STOP / EXIT CRITERIA (STABLE “GOOD SET”) (Requirement #3)
+# =========================================================
+stop_and_exit:
+  config:
+    target_top_k: 40             # set null to use natural threshold
+    natural_cutoff_delta: 0
+    min_exposures_per_image: 5
+    confidence_z: 1.0
+    sigma_confident_max: 90
+    min_boundary_gap: 25
+    stability_window_rounds: 120
+    max_rank_swaps_in_window: 1
+    coverage_required: true
+    allow_manual_finish: true
+  ordering: "ORDER BY mu DESC, sigma ASC, exposures DESC, sha256 ASC"
+  bounds:
+    ci_lower: "mu - confidence_z * sigma"
+    ci_upper: "mu + confidence_z * sigma"
+  telemetry_per_round:
+    - median_mu
+    - topk_sha256_list
+    - boundary_gap: "ci_lower(k) - ci_upper(k+1)"
+    - boundary_sigmas: "[sigma(k), sigma(k+1)]"
+    - topk_swaps_last_window
+    - unseen_count
+  predicates:
+    coverage_complete: "coverage_required -> unseen_count == 0 else true"
+    exposures_floor_met: "min(exposures in ranks [k-3..k+3]) >= min_exposures_per_image"
+    confidence_separation: "boundary_gap >= min_boundary_gap AND max(boundary_sigmas) <= sigma_confident_max"
+    stability_attained: "topk_swaps_last_window <= max_rank_swaps_in_window"
+  decision_rule:
+    auto_finish: "coverage_complete AND exposures_floor_met AND (confidence_separation OR stability_attained)"
+  outputs:
+    good_set_selection:
+      if_top_k: "first K under ordering"
+      if_natural: "mu >= median_mu + natural_cutoff_delta"
+  ui_signals:
+    meters:
+      - { name: "Confidence gap", value: boundary_gap, target: min_boundary_gap }
+      - { name: "Uncertainty σ @ boundary", value: "max(boundary_sigmas)", target: sigma_confident_max }
+      - { name: "Stability (Top-K swaps)", value: topk_swaps_last_window, target: max_rank_swaps_in_window }
+    modal_when_ready: "Suggest: Create a gallery from the current selection?"
+
+# =========================================================
+# 7) GALLERY CREATION (Requirement #4)
+# =========================================================
+gallery:
+  selection_policies:
+    top_k:
+      params: { k: "${stop_and_exit.config.target_top_k}" }
+      rule: "take first K under stop_and_exit.ordering"
+    threshold_mu:
+      params: { min_mu: 1500 }
+      rule: "mu >= min_mu"
+    threshold_ci:
+      params: { z: "${stop_and_exit.config.confidence_z}", min_ci_lower: 1500 }
+      rule: "mu - z*sigma >= min_ci_lower"
+    manual:
+      params: { sha256_list: [] }
+      rule: "exact user selection"
+  duplicates_policy:
+    options: ["include_duplicates","collapse_to_canonical","exclude_duplicates"]
+    default: "collapse_to_canonical"
+  ranking_and_ties:
+    sort: "${stop_and_exit.ordering}"
+    dense_rank: true
+  api:
+    - method: POST
+      path: /api/galleries
+      body:
+        name: string
+        selection_policy: enum["top_k","threshold_mu","threshold_ci","manual"]
+        selection_params: object
+        duplicates_policy: enum["include_duplicates","collapse_to_canonical","exclude_duplicates"]
+      response:
+        gallery_id: int
+        name: string
+        size: int
+        created_at: timestamp
+        sample:
+          - { sha256: string, mu: float, sigma: float, exposures: int, rank: int }
+    - method: GET
+      path: /api/galleries
+      response:
+        - { gallery_id: int, name: string, size: int, created_at: timestamp }
+    - method: GET
+      path: /api/galleries/{gallery_id}
+      response:
+        gallery_id: int
+        name: string
+        size: int
+        created_at: timestamp
+        images:
+          - { sha256: string, mu: float, sigma: float, exposures: int, rank: int }
+    - method: PATCH
+      path: /api/galleries/{gallery_id}
+      body:
+        name: string|null
+        remove_sha256: string|null
+        add_sha256: string|null
+        re_rank: boolean|null
+      response: { ok: true }
+    - method: DELETE
+      path: /api/galleries/{gallery_id}
+      response: { ok: true }
+  sql_templates:
+    create_gallery: |
+      INSERT INTO galleries (name, selection_policy, selection_params, duplicates_policy, app_round_at_creation)
+      VALUES ($1, $2, $3::jsonb, $4, (SELECT round FROM app_state WHERE id=1))
+      RETURNING id, created_at;
+    candidates_ordered: |
+      SELECT sha256, mu, sigma, exposures
+      FROM images
+      WHERE is_archived_hard_no = FALSE
+      ORDER BY mu DESC, sigma ASC, exposures DESC, sha256 ASC;
+    collapse_duplicates_cte: |
+      WITH canon AS (
+        SELECT duplicate_sha256 AS dup, canonical_sha256 AS canon FROM duplicates
+      )
+      SELECT COALESCE(c.canon, i.sha256) AS sha256, i.mu, i.sigma, i.exposures
+      FROM ({CANDIDATES}) i
+      LEFT JOIN canon c ON c.dup = i.sha256;
+    insert_gallery_images_dense_rank: |
+      WITH ranked AS (
+        SELECT sha256,
+               ROW_NUMBER() OVER (ORDER BY mu DESC, sigma ASC, exposures DESC, sha256 ASC) AS rnk
+        FROM ({FINAL}) f
+      )
+      INSERT INTO gallery_images (gallery_id, sha256, rank)
+      SELECT $1, sha256, rnk FROM ranked;
+
+# =========================================================
+# 8) IMAGE DELIVERY (NO DB BLOBS)
+# =========================================================
+image_delivery:
+  endpoint:
+    method: GET
+    path: /api/image/{sha256}
+    behavior:
+      - Lookup {sha256 -> path} in DirectoryService cache
+      - If missing: 404
+      - Stream file from disk with appropriate Content-Type
+      - Set Cache-Control: "public, max-age=604800"
+      - Support Range requests for large files
+  security:
+    - Do NOT accept raw filesystem paths from the client
+    - Only serve files that exist in the active cache
+
+# =========================================================
+# 9) DUPLICATES (CANONICALIZATION)
+# =========================================================
+duplicates:
+  detection:
+    - Primary: byte-identical SHA-256 hash equality
+  behaviors:
+    - When a duplicate is discovered:
+        - Insert into duplicates(duplicate_sha256, canonical_sha256)
+        - Do NOT delete the duplicate image row; stats stay separate unless collapsed in gallery
+    - Optionally provide admin endpoint to merge/unmerge duplicates (future)
+
+# =========================================================
+# 10) APP STATE, TELEMETRY, AND SEEN/STATUS
+# =========================================================
+state_and_telemetry:
+  round_increment: "On successful GET /api/pair, increment app_state.round by 1"
+  per_round_snapshots:
+    persist:
+      - round
+      - topk_sha256_list (JSON)
+      - boundary_gap
+      - topk_swaps_last_window
+      - unseen_count
+      - created_at
+  status_labels:
+    - "Coverage complete"
+    - "Boundary confident"
+    - "Stable ranking"
+    - "Ready to finish"
+
+# =========================================================
+# 11) RECENT-PAIR SUPPRESSION
+# =========================================================
+recent_suppression:
+  tables: none  # in-memory ring buffers are sufficient
+  config:
+    image_ring_size: 64
+    pair_ring_size: 128
+  rules:
+    - Do not serve an image that appeared within last image_ring_size rounds if avoidable
+    - Do not repeat the exact pair within pair_ring_size rounds
+
+# =========================================================
+# 12) ENDPOINT CONTRACTS (FULL)
+# =========================================================
+api:
+  - method: POST
+    path: /api/directory
+    auth: required
+    body: { root: string }
+    responses:
+      200: { ok: true, discovered: int }
+      400: { error: "invalid or unreadable path" }
+  - method: GET
+    path: /api/pair
+    auth: required
+    responses:
+      200:
+        round: int
+        left_sha256: string
+        right_sha256: string
+        left_url: string
+        right_url: string
+        meta:
+          left: { mu: float, sigma: float, exposures: int }
+          right: { mu: float, sigma: float, exposures: int }
+      409: { error: "no eligible pair available" }
+  - method: POST
+    path: /api/choice
+    auth: required
+    body:
+      round: int
+      left_sha256: string
+      right_sha256: string
+      outcome: enum["LEFT","RIGHT","SKIP"]
+    responses:
+      200: { ok: true }
+      400: { error: "bad payload" }
+      409: { error: "round mismatch or images not from last pair" }
+  - method: GET
+    path: /api/state
+    responses:
+      200:
+        round: int
+        unseen_count: int
+        seen_count: int
+        topk_preview:
+          - { sha256: string, mu: float, sigma: float, exposures: int, rank: int }
+        ready_to_finish: boolean
+  - method: GET
+    path: /api/image/{sha256}
+    responses:
+      200: "binary stream"
+      404: { error: "not found" }
+  - method: POST
+    path: /api/galleries
+    body:
+      name: string
+      selection_policy: enum["top_k","threshold_mu","threshold_ci","manual"]
+      selection_params: object
+      duplicates_policy: enum["include_duplicates","collapse_to_canonical","exclude_duplicates"]
+    responses:
+      200:
+        gallery_id: int
+        name: string
+        size: int
+        created_at: timestamp
+        sample:
+          - { sha256: string, mu: float, sigma: float, exposures: int, rank: int }
+      409: { error: "gallery name exists" }
+  - method: GET
+    path: /api/galleries
+    responses:
+      200:
+        - { gallery_id: int, name: string, size: int, created_at: timestamp }
+  - method: GET
+    path: /api/galleries/{gallery_id}
+    responses:
+      200:
+        gallery_id: int
+        name: string
+        size: int
+        created_at: timestamp
+        images:
+          - { sha256: string, mu: float, sigma: float, exposures: int, rank: int }
+      404: { error: "not found" }
+  - method: PATCH
+    path: /api/galleries/{gallery_id}
+    body:
+      name: string|null
+      remove_sha256: string|null
+      add_sha256: string|null
+      re_rank: boolean|null
+    responses: { 200: { ok: true }, 404: { error: "not found" } }
+  - method: DELETE
+    path: /api/galleries/{gallery_id}
+    responses: { 200: { ok: true } }
+
+# =========================================================
+# 13) SQL FRAGMENTS (Postgres)
+# =========================================================
+sql:
+  upsert_image_on_scan: |
+    INSERT INTO images (sha256) VALUES ($1)
+    ON CONFLICT (sha256) DO NOTHING;
+  read_app_round: "SELECT round FROM app_state WHERE id=1 FOR UPDATE;"
+  bump_round: "UPDATE app_state SET round = round + 1 WHERE id=1 RETURNING round;"
+  record_choice: |
+    INSERT INTO choices (round, left_sha256, right_sha256, winner_sha256, skipped)
+    VALUES ($1, $2, $3, $4, $5);
+  update_on_win_loss: |
+    -- parameters: (sha_winner, delta_mu_winner, sha_loser, delta_mu_loser)
+    UPDATE images SET
+      mu = mu + $2,
+      likes = likes + 1,
+      exposures = exposures + 1,
+      sigma = GREATEST($$sigma_min$$, sigma * 0.97),
+      next_eligible_round = NULL,
+      last_seen_round = (SELECT round FROM app_state WHERE id=1)
+    WHERE sha256 = $1;
+    UPDATE images SET
+      mu = mu + $4,
+      unlikes = unlikes + 1,
+      exposures = exposures + 1,
+      sigma = GREATEST($$sigma_min$$, sigma * 0.97),
+      next_eligible_round = NULL,
+      last_seen_round = (SELECT round FROM app_state WHERE id=1)
+    WHERE sha256 = $3;
+  update_on_skip: |
+    -- parameters: (sha_a, sha_b, next_round)
+    UPDATE images SET
+      skips = skips + 1,
+      next_eligible_round = $3
+    WHERE sha256 IN ($1, $2);
+
+# =========================================================
+# 14) PAIR CONSTRUCTION — PSEUDOCODE
+# =========================================================
+pseudocode:
+  next_pair: |
+    def next_pair(db, cache, recent_img_ring, recent_pair_ring):
+        round = db.bump_round()   # tx: lock app_state, increment
+        pool = load_eligible_pool(db, round)
+        # 1) Avoid repeats
+        pool = pool.exclude_sha256(recent_img_ring)
+        # 2) If unseen exists
+        if pool.unseen:
+            a = sample(pool.unseen, weight=lambda i: 1)  # all exposures=0
+            b = pick_active_near_median_with_high_sigma(pool.active)
+        else:
+            shortlist = top_k(pool.active, 64, key=lambda i: i.sigma DESC then |i.mu - median_mu|)
+            a,b = argmax_pair(shortlist, key=lambda x,y: info_gain(x,y))  # close mu, high σ
+        # 3) Maybe inject skipped-eligible
+        if random()<0.30 and pool.skipped_eligible:
+            if random()<0.5: a = random_choice(pool.skipped_eligible)
+            else:            b = random_choice(pool.skipped_eligible)
+        ensure a.sha256 != b.sha256
+        ensure (a.sha256,b.sha256) not in recent_pair_ring
+        recent_img_ring.push(a.sha256); recent_img_ring.push(b.sha256)
+        recent_pair_ring.push(tuple(sorted([a.sha256,b.sha256])))
+        return round, a, b
+  record_choice: |
+    def record_choice(db, round, a, b, outcome):
+        if outcome == "SKIP":
+            next_round = current_round() + randint(11,49)
+            db.update_on_skip(a.sha256, b.sha256, next_round)
+            db.record_choice(round, a.sha256, b.sha256, winner=None, skipped=True)
+            return
+        # Elo
+        Ea = 1/(1+10 ** ((b.mu - a.mu)/400))
+        Sa = 1 if outcome=="LEFT" else 0
+        Ka = clamp(K_base*(a.sigma/sigma0), 8, 48)
+        Kb = clamp(K_base*(b.sigma/sigma0), 8, 48)
+        delta_a = Ka*(Sa - Ea)
+        delta_b = Kb*((1-Sa) - (1 - Ea))
+        # Write atomically
+        db.transaction( lambda tx: (
+          tx.insert_choice(round, a.sha256, b.sha256, winner=a.sha256 if Sa==1 else b.sha256, skipped=False),
+          tx.update_win_loss(winner=(a if Sa==1 else b), delta_mu_winner=(delta_a if Sa==1 else delta_b),
+                             loser=(b if Sa==1 else a),  delta_mu_loser=(delta_b if Sa==1 else delta_a))
+        ))
+
+# =========================================================
+# 15) TEST PLAN (HIGH-LEVEL)
+# =========================================================
+tests:
+  unit:
+    - hash_same_bytes_same_sha256
+    - unseen_bias_serves_unseen_first
+    - skip_sets_next_eligible_between_11_and_49
+    - avoided_recent_pairing
+    - elo_update_directionality_correct
+    - sigma_shrinks_on_exposure
+    - coverage_complete_flag_when_all_seen
+    - stop_rule_requires_coverage_plus_gap_or_stability
+  integration:
+    - directory_set_and_scan_creates_images_rows
+    - pair_then_choice_round_trip
+    - skipped_image_reappears_after_window
+    - gallery_creation_top_k_and_threshold_ci
+    - duplicates_collapse_to_canonical
+  performance:
+    - scan_50k_files_under_time_budget
+    - pair_selection_under_50ms_with_10k_images
+
+# =========================================================
+# 16) NON-FUNCTIONAL & SECURITY
+# =========================================================
+non_functional:
+  perf_targets:
+    pair_selection_p95_ms: 50
+    choice_write_p95_ms: 40
+  logging:
+    - structured logs for /api/pair and /api/choice
+    - redact filesystem paths in client-facing logs
+  security:
+    - validate directory path; no path traversal in /api/image/{sha256}
+    - limit request sizes; rate-limit pairing/choice endpoints
+    - CORS configured for your frontend origin
+
+# =========================================================
+# 17) OPERATIONAL KNOBS
+# =========================================================
+knobs:
+  epsilon_greedy: 0.10
+  skip_resurface_min_rounds: 11
+  skip_resurface_max_rounds: 49
+  recent_image_window: 64
+  recent_pair_window: 128
+  shortlist_k: 64
+  k_base: 24
+  sigma0: 350
+  sigma_min: 60
+  min_boundary_gap: 25
+  sigma_confident_max: 90
+  stability_window_rounds: 120
+  max_rank_swaps_in_window: 1

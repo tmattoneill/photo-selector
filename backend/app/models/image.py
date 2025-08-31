@@ -1,24 +1,33 @@
-import uuid
-from datetime import datetime
-from sqlalchemy import Column, String, Integer, Boolean, LargeBinary, DateTime, ForeignKey, CheckConstraint, text
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, String, Integer, Boolean, Float, text, Index
 from ..core.database import Base
 
 
 class Image(Base):
-    """Image statistics and choice tracking by SHA256."""
+    """Image with Elo+σ rating system as per algo-update.yaml spec."""
     
     __tablename__ = "images"
     
-    sha256 = Column(String(64), primary_key=True, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    # Primary key
+    sha256 = Column(String(64), primary_key=True)
     
-    # Stats tracking
-    exposures = Column(Integer, default=0, server_default=text('0'), nullable=False)
-    likes = Column(Integer, default=0, server_default=text('0'), nullable=False)
-    unlikes = Column(Integer, default=0, server_default=text('0'), nullable=False)
-    skips = Column(Integer, default=0, server_default=text('0'), nullable=False)
-    next_eligible_round = Column(Integer, nullable=True)
+    # Elo+σ rating fields
+    mu = Column(Float, nullable=False, default=1500.0, server_default=text('1500.0'))
+    sigma = Column(Float, nullable=False, default=350.0, server_default=text('350.0'))
     
-    # Relationships - portfolio relationship temporarily disabled for new architecture
+    # Statistics counters
+    exposures = Column(Integer, nullable=False, default=0, server_default=text('0'))
+    likes = Column(Integer, nullable=False, default=0, server_default=text('0'))
+    unlikes = Column(Integer, nullable=False, default=0, server_default=text('0'))
+    skips = Column(Integer, nullable=False, default=0, server_default=text('0'))
+    
+    # Round tracking
+    last_seen_round = Column(Integer, nullable=True)
+    next_eligible_round = Column(Integer, nullable=True)  # for skip resurfacing window
+    
+    # Archive flag
+    is_archived_hard_no = Column(Boolean, nullable=False, default=False, server_default=text('false'))
+    
+    __table_args__ = (
+        Index('idx_images_mu_sigma', 'mu', 'sigma'),
+        Index('idx_images_exposures', 'exposures'),
+    )
