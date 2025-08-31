@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from ...core.database import get_db
 from ...services.directory_service import DirectoryService
 from ...services.pairing_service import PairingService
+from ...utils.image_utils import get_image_dimensions
 
 router = APIRouter()
 
@@ -50,11 +51,24 @@ async def get_image_pair(db: Session = Depends(get_db)):
             )
         
         def format_image(image_data: dict) -> ImageData:
+            # Get actual image dimensions from file
+            width, height = 1, 1  # Default fallback
+            try:
+                file_path = directory_service.get_path_by_sha256(image_data["sha256"])
+                if file_path:
+                    width, height = get_image_dimensions(file_path)
+                    if width == 0 and height == 0:
+                        # Fall back to 1x1 if dimensions couldn't be read
+                        width, height = 1, 1
+            except Exception as e:
+                # Debug: you could log the exception here
+                pass
+            
             return ImageData(
                 sha256=image_data["sha256"],
                 base64=f"/api/image/{image_data['sha256']}",  # SHA256-based serving
-                w=image_data.get("width", 1),  # Default dimensions if not available
-                h=image_data.get("height", 1)
+                w=width,
+                h=height
             )
         
         return PairResponse(

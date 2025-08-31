@@ -15,8 +15,12 @@ async def serve_image(sha256: str, db: Session = Depends(get_db)):
     try:
         service = DirectoryService(db)
         
+        # If cache is empty, try to set samples directory
+        if len(service.get_all_sha256s()) == 0:
+            service.set_root_directory("/samples")
+        
         # Find file in current directory by SHA256
-        file_path = service.find_file_by_sha256(sha256)
+        file_path = service.get_path_by_sha256(sha256)
         
         if not file_path:
             raise HTTPException(status_code=404, detail="Image not found in current directory")

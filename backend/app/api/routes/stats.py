@@ -34,17 +34,17 @@ async def get_stats(db: Session = Depends(get_db)):
     directory_service = DirectoryService(db)
     stats_data = service.get_stats()
     
-    # Get all images from current directory
-    image_files = directory_service.scan_directory_images()
+    # Get all images from current directory cache
+    if len(directory_service.get_all_sha256s()) == 0:
+        directory_service.set_root_directory("/samples")
     
-    # Create mapping of SHA256 to file paths for images in current directory
-    directory_images = {}
-    for file_path in image_files:
-        try:
-            sha256 = get_sha256_hash(file_path)
-            directory_images[sha256] = file_path
-        except Exception:
-            continue
+    # Get paths from cache
+    all_sha256s = directory_service.get_all_sha256s()
+    image_paths = {sha256: directory_service.get_path_by_sha256(sha256) 
+                   for sha256 in all_sha256s}
+    
+    # Use the image_paths mapping we created above
+    directory_images = {sha256: path for sha256, path in image_paths.items() if path}
     
     # Convert by_image data to Pydantic models with file paths
     by_image_stats = []
