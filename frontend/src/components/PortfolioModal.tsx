@@ -15,7 +15,7 @@ export const PortfolioModal: React.FC<PortfolioModalProps> = ({
 }) => {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [exportPath, setExportPath] = useState('/tmp/portfolios');
+  const [exportPath, setExportPath] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,11 +48,30 @@ export const PortfolioModal: React.FC<PortfolioModalProps> = ({
     }
   };
 
+  const handleSelectDirectory = async () => {
+    try {
+      // Check if we're running in a browser that supports the File System Access API
+      if ('showDirectoryPicker' in window) {
+        const dirHandle = await (window as any).showDirectoryPicker();
+        setExportPath(dirHandle.name); // This will show the folder name
+        // Store the full handle for later use
+        (window as any).selectedDirHandle = dirHandle;
+      } else {
+        // Fallback for browsers without File System Access API
+        setError('Directory picker not supported. Please enter the path manually.');
+      }
+    } catch (err) {
+      if ((err as any).name !== 'AbortError') {
+        setError('Failed to select directory');
+      }
+    }
+  };
+
   const handleExportPortfolio = async () => {
     if (!portfolioId) return;
 
     if (!exportPath.trim()) {
-      setError('Please enter an export directory path');
+      setError('Please select or enter an export directory path');
       return;
     }
 
@@ -173,16 +192,26 @@ export const PortfolioModal: React.FC<PortfolioModalProps> = ({
                   <div className="space-y-4">
                     <div>
                       <label htmlFor="exportPath" className="block text-sm font-medium text-gray-700 mb-2">
-                        Export Directory Path *
+                        Export Directory *
                       </label>
-                      <input
-                        id="exportPath"
-                        type="text"
-                        value={exportPath}
-                        onChange={(e) => setExportPath(e.target.value)}
-                        placeholder="Enter directory path..."
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
+                      <div className="flex items-center space-x-2">
+                        <input
+                          id="exportPath"
+                          type="text"
+                          value={exportPath}
+                          onChange={(e) => setExportPath(e.target.value)}
+                          placeholder="Select directory or enter path..."
+                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleSelectDirectory}
+                          className="px-4 py-2 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-lg text-sm font-medium transition-colors"
+                          disabled={isExporting}
+                        >
+                          📁 Browse
+                        </button>
+                      </div>
                       <p className="text-xs text-gray-500 mt-1">
                         Images will be saved in a subfolder named "portfolio_{name}"
                       </p>

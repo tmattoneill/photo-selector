@@ -5,5 +5,6 @@ from .choice import Choice
 from .app_state import AppState
 from .duplicate import Duplicate
 from .gallery import Gallery, GalleryImage
+from .portfolio import Portfolio
 
-__all__ = ["User", "Image", "Choice", "AppState", "Duplicate", "Gallery", "GalleryImage"]
+__all__ = ["User", "Image", "Choice", "AppState", "Duplicate", "Gallery", "GalleryImage", "Portfolio"]
