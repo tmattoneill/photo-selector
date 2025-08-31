@@ -12,6 +12,7 @@ import type {
   PortfolioResponse,
   ExportPortfolioRequest,
   ExportResponse,
+  ResetResponse,
 } from './types';
 
 const BASE_URL = 'http://localhost:8000/api';
@@ -72,6 +73,11 @@ export const apiClient = {
 
   async exportPortfolio(portfolioId: string, request: ExportPortfolioRequest): Promise<ExportResponse> {
     const response = await api.post(`/portfolio/${portfolioId}/export`, request);
+    return response.data;
+  },
+
+  async resetGalleryData(): Promise<ResetResponse> {
+    const response = await api.post('/reset');
     return response.data;
   },
 };

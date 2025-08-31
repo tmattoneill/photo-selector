@@ -1,5 +1,5 @@
 import os
-import base64
+import shutil
 from typing import List, Dict, Any, Optional
 from uuid import UUID
 from sqlalchemy.orm import Session
@@ -8,6 +8,7 @@ from ..models.portfolio import Portfolio
 from ..models.image import Image
 from ..models.user import User
 from .choice_service import ChoiceService
+from .directory_service import DirectoryService
 
 
 class PortfolioService:
@@ -17,29 +18,25 @@ class PortfolioService:
         self.db = db
     
     def create_portfolio(self, name: str, description: Optional[str], image_ids: List[str]) -> Portfolio:
-        """Create a new portfolio with specified images."""
+        """Create a new portfolio with specified images (SHA256 hashes)."""
         
         # Get default user
         choice_service = ChoiceService(self.db)
         user_id = choice_service.ensure_default_user()
         
-        # Validate image IDs exist and are canonical
-        image_uuids = []
+        # Validate that image_ids are SHA256 hashes (should be strings, not UUIDs)
         for image_id in image_ids:
-            try:
-                image_uuids.append(UUID(image_id))
-            except ValueError:
-                raise ValueError(f"Invalid image ID format: {image_id}")
+            if not isinstance(image_id, str) or len(image_id) != 64:
+                raise ValueError(f"Invalid image ID format (expected SHA256): {image_id}")
         
-        # Check that all images exist and are canonical
-        stmt = select(Image).where(
-            Image.id.in_(image_uuids),
-            Image.is_canonical == True
-        )
+        # Check that all images exist (by SHA256)
+        stmt = select(Image).where(Image.sha256.in_(image_ids))
         existing_images = list(self.db.execute(stmt).scalars().all())
         
         if len(existing_images) != len(image_ids):
-            raise ValueError("Some images were not found or are not canonical")
+            found_sha256s = {img.sha256 for img in existing_images}
+            missing = set(image_ids) - found_sha256s
+            raise ValueError(f"Some images were not found: {missing}")
         
         # Create portfolio
         portfolio = Portfolio(
@@ -68,37 +65,48 @@ class PortfolioService:
     def export_portfolio(self, portfolio_id: str, directory_path: str) -> Dict[str, Any]:
         """Export portfolio images to the specified directory."""
         
-        # Get portfolio
+        # Get portfolio with images loaded
         portfolio = self.get_portfolio(portfolio_id)
         if not portfolio:
             raise FileNotFoundError(f"Portfolio {portfolio_id} not found")
         
         # Create export directory
-        full_export_path = os.path.join(directory_path, f"portfolio_{portfolio.name}")
+        portfolio_name_clean = portfolio.name.replace(" ", "_").replace("/", "_")
+        full_export_path = os.path.join(directory_path, f"portfolio_{portfolio_name_clean}")
         os.makedirs(full_export_path, exist_ok=True)
+        
+        # Get directory service to find image files
+        directory_service = DirectoryService(self.db)
+        
+        # Ensure directory is set
+        if len(directory_service.get_all_sha256s()) == 0:
+            directory_service.set_root_directory("/samples")
         
         exported_count = 0
         
-        # Export each image
+        # Export each image by copying from filesystem
         for image in portfolio.images:
             try:
-                # Decode base64 data
-                image_data = base64.b64decode(image.base64_data)
+                # Find source file path using SHA256
+                source_path = directory_service.get_path_by_sha256(image.sha256)
                 
-                # Generate filename from original path
-                original_filename = os.path.basename(image.file_path)
-                export_filename = f"{image.sha256[:8]}_{original_filename}"
-                export_file_path = os.path.join(full_export_path, export_filename)
-                
-                # Write image file
-                with open(export_file_path, 'wb') as f:
-                    f.write(image_data)
-                
-                exported_count += 1
+                if source_path and os.path.exists(source_path):
+                    # Get file extension
+                    _, ext = os.path.splitext(source_path)
+                    
+                    # Create destination filename (SHA256 + original extension)
+                    dest_filename = f"{image.sha256}{ext}"
+                    dest_path = os.path.join(full_export_path, dest_filename)
+                    
+                    # Copy file
+                    shutil.copy2(source_path, dest_path)
+                    exported_count += 1
+                else:
+                    print(f"Warning: Could not find file for image {image.sha256}")
                 
             except Exception as e:
                 # Log error but continue with other images
-                print(f"Failed to export image {image.id}: {str(e)}")
+                print(f"Failed to export image {image.sha256}: {str(e)}")
                 continue
         
         return {

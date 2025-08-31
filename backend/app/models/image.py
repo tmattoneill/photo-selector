@@ -1,4 +1,5 @@
 from sqlalchemy import Column, String, Integer, Boolean, Float, text, Index
+from sqlalchemy.orm import relationship
 from ..core.database import Base
 
 
@@ -31,3 +32,6 @@ class Image(Base):
         Index('idx_images_mu_sigma', 'mu', 'sigma'),
         Index('idx_images_exposures', 'exposures'),
     )
+    
+    # Relationships
+    portfolios = relationship("Portfolio", secondary="portfolio_images", back_populates="images")

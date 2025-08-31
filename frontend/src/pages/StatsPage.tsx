@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Stats } from '../components/Stats';
+import { ResetButton } from '../components/ResetButton';
 import { apiClient } from '../api/client';
 import type { StatsResponse } from '../api/types';
 
@@ -44,6 +45,9 @@ export const StatsPage: React.FC = () => {
                 Gallery
               </Link>
             </nav>
+          </div>
+          <div className="flex items-center">
+            <ResetButton />
           </div>
         </div>
       </div>

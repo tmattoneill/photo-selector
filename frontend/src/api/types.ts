@@ -100,3 +100,10 @@ export interface ExportResponse {
   export_path: string;
   message: string;
 }
+
+// Reset types
+export interface ResetResponse {
+  success: boolean;
+  message: string;
+  reset_items: string[];
+}
