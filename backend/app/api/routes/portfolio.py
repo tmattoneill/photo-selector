@@ -1,5 +1,6 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ...core.database import get_db
@@ -91,13 +92,50 @@ async def get_portfolio(
     )
 
 
+@router.get("/portfolio/{portfolio_id}/download")
+async def download_portfolio(
+    portfolio_id: str,
+    db: Session = Depends(get_db)
+):
+    """Download portfolio as a zip file."""
+    service = PortfolioService(db)
+    
+    try:
+        zip_buffer, zip_filename, exported_count = service.export_portfolio_to_zip(portfolio_id)
+        
+        if exported_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No images found to export"
+            )
+        
+        # Return the zip file as a streaming response
+        return StreamingResponse(
+            iter([zip_buffer.read()]),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f"attachment; filename={zip_filename}",
+                "Content-Length": str(len(zip_buffer.getvalue()))
+            }
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Download failed: {str(e)}"
+        )
+
 @router.post("/portfolio/{portfolio_id}/export", response_model=ExportResponse)
 async def export_portfolio(
     portfolio_id: str,
     request: ExportPortfolioRequest,
     db: Session = Depends(get_db)
 ):
-    """Export portfolio images to disk."""
+    """Export portfolio images to disk (legacy method)."""
     service = PortfolioService(db)
     
     try:

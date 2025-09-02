@@ -1,5 +1,7 @@
 import os
 import shutil
+import zipfile
+from io import BytesIO
 from typing import List, Dict, Any, Optional
 from uuid import UUID
 from sqlalchemy.orm import Session
@@ -62,8 +64,58 @@ class PortfolioService:
         stmt = select(Portfolio).where(Portfolio.id == portfolio_uuid)
         return self.db.execute(stmt).scalar_one_or_none()
     
+    def export_portfolio_to_zip(self, portfolio_id: str) -> tuple[BytesIO, str, int]:
+        """Export portfolio images as a zip file in memory."""
+        
+        # Get portfolio with images loaded
+        portfolio = self.get_portfolio(portfolio_id)
+        if not portfolio:
+            raise FileNotFoundError(f"Portfolio {portfolio_id} not found")
+        
+        # Get directory service to find image files
+        directory_service = DirectoryService(self.db)
+        
+        # Ensure directory is set
+        if len(directory_service.get_all_sha256s()) == 0:
+            directory_service.set_root_directory("/samples")
+        
+        # Create zip file in memory
+        zip_buffer = BytesIO()
+        portfolio_name_clean = portfolio.name.replace(" ", "_").replace("/", "_")
+        zip_filename = f"portfolio_{portfolio_name_clean}.zip"
+        
+        exported_count = 0
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # Add each image to the zip
+            for image in portfolio.images:
+                try:
+                    # Find source file path using SHA256
+                    source_path = directory_service.get_path_by_sha256(image.sha256)
+                    
+                    if source_path and os.path.exists(source_path):
+                        # Get file extension
+                        _, ext = os.path.splitext(source_path)
+                        
+                        # Create filename (SHA256 + original extension)
+                        filename = f"{image.sha256}{ext}"
+                        
+                        # Add file to zip
+                        zip_file.write(source_path, filename)
+                        exported_count += 1
+                    else:
+                        print(f"Warning: Could not find file for image {image.sha256}")
+                    
+                except Exception as e:
+                    # Log error but continue with other images
+                    print(f"Failed to export image {image.sha256}: {str(e)}")
+                    continue
+        
+        zip_buffer.seek(0)
+        return zip_buffer, zip_filename, exported_count
+
     def export_portfolio(self, portfolio_id: str, directory_path: str) -> Dict[str, Any]:
-        """Export portfolio images to the specified directory."""
+        """Export portfolio images to the specified directory (legacy method)."""
         
         # Get portfolio with images loaded
         portfolio = self.get_portfolio(portfolio_id)

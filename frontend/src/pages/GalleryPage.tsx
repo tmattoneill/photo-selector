@@ -53,8 +53,7 @@ export const GalleryPage: React.FC = () => {
 
   const handleCreatePortfolio = () => {
     if (selectedImages.size === 0) {
-      alert('Please select at least one image');
-      return;
+      return; // Button is disabled, but handle gracefully
     }
     setShowPortfolioModal(true);
   };
@@ -117,19 +116,31 @@ export const GalleryPage: React.FC = () => {
               </button>
             </div>
 
-            {selectedImages.size > 0 && (
-              <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-4">
+              {selectedImages.size > 0 && (
                 <span className="text-gray-700">
                   {selectedImages.size} selected
                 </span>
+              )}
+              <div className="flex flex-col items-end">
                 <button
                   onClick={handleCreatePortfolio}
-                  className="btn-primary"
+                  disabled={selectedImages.size === 0}
+                  className={`${
+                    selectedImages.size > 0 
+                      ? 'btn-primary' 
+                      : 'px-4 py-2 bg-gray-300 text-gray-500 rounded-lg cursor-not-allowed'
+                  }`}
                 >
                   Create Portfolio
                 </button>
+                {selectedImages.size === 0 && (
+                  <span className="text-xs text-gray-500 mt-1">
+                    Select images to create portfolio
+                  </span>
+                )}
               </div>
-            )}
+            </div>
           </div>
         )}
 

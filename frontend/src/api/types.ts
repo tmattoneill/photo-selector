@@ -24,13 +24,12 @@ export interface ChoiceResponse {
 }
 
 export interface DirectoryRequest {
-  dir: string;
+  root: string;
 }
 
 export interface DirectoryResponse {
-  directory: string;
-  image_count: number;
-  message: string;
+  ok: boolean;
+  discovered: number;
 }
 
 export interface ImageStats {

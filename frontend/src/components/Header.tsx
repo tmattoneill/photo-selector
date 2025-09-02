@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { apiClient } from '../api/client';
 
 interface HeaderProps {
   totalRounds: number;
@@ -7,34 +6,100 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ totalRounds, onDirectoryChange }) => {
-  const [isIngesting, setIsIngesting] = useState(false);
-  const [showDirectoryInput, setShowDirectoryInput] = useState(false);
-  const [directoryPath, setDirectoryPath] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
+  const [showUploadArea, setShowUploadArea] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
-  const handleIngestDirectory = async () => {
-    if (!directoryPath.trim()) {
-      setMessage({ text: 'Please enter a directory path', type: 'error' });
+
+  const handleDirectorySelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) {
       return;
     }
 
-    setIsIngesting(true);
-    try {
-      const result = await apiClient.setDirectory({ dir: directoryPath });
+    // Filter for image files only
+    const imageFiles = Array.from(files).filter(file => 
+      file.type.startsWith('image/') && 
+      ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)
+    );
+
+    if (imageFiles.length === 0) {
       setMessage({
-        text: result.message,
-        type: 'success',
+        text: 'No image files found in selected directory',
+        type: 'error',
       });
-      setShowDirectoryInput(false);
-      setDirectoryPath('');
-      onDirectoryChange?.();
+      return;
+    }
+
+    setIsUploading(true);
+    setMessage({
+      text: `Processing ${imageFiles.length} images...`,
+      type: 'success',
+    });
+
+    try {
+      // Upload images in batches to avoid size limits
+      const batchSize = 10; // Upload 10 images at a time
+      let totalUploaded = 0;
+      const errors: string[] = [];
+
+      for (let i = 0; i < imageFiles.length; i += batchSize) {
+        const batch = imageFiles.slice(i, i + batchSize);
+        
+        const formData = new FormData();
+        batch.forEach((file) => {
+          formData.append(`images`, file);
+        });
+
+        try {
+          const response = await fetch('/api/upload', {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            errors.push(`Batch ${Math.floor(i/batchSize) + 1}: ${errorText}`);
+            continue;
+          }
+
+          const result = await response.json();
+          totalUploaded += result.uploaded;
+          
+          // Update progress message
+          setMessage({
+            text: `Uploaded ${totalUploaded} of ${imageFiles.length} images...`,
+            type: 'success',
+          });
+          
+        } catch (batchError) {
+          errors.push(`Batch ${Math.floor(i/batchSize) + 1}: ${batchError}`);
+        }
+      }
+
+      if (totalUploaded > 0) {
+        setMessage({
+          text: `Successfully uploaded ${totalUploaded} images${errors.length > 0 ? ` (${errors.length} batches failed)` : ''}`,
+          type: totalUploaded === imageFiles.length ? 'success' : 'error',
+        });
+        setShowUploadArea(false);
+        onDirectoryChange?.();
+      } else {
+        setMessage({
+          text: `Failed to upload images: ${errors.join('; ')}`,
+          type: 'error',
+        });
+      }
+      
     } catch (error) {
       setMessage({
-        text: error instanceof Error ? error.message : 'Failed to set directory',
+        text: error instanceof Error ? error.message : 'Failed to upload images',
         type: 'error',
       });
     } finally {
-      setIsIngesting(false);
+      setIsUploading(false);
+      // Reset the file input
+      event.target.value = '';
     }
   };
 
@@ -54,44 +119,41 @@ export const Header: React.FC<HeaderProps> = ({ totalRounds, onDirectoryChange }
           </div>
 
           <div className="flex items-center space-x-4">
-            {!showDirectoryInput ? (
+            {!showUploadArea ? (
               <button
-                onClick={() => setShowDirectoryInput(true)}
+                onClick={() => setShowUploadArea(true)}
                 className="btn-secondary text-sm"
-                disabled={isIngesting}
+                disabled={isUploading}
               >
-                Change Folder
+                📁 Select Folder
               </button>
             ) : (
               <div className="flex items-center space-x-2">
                 <input
-                  type="text"
-                  value={directoryPath}
-                  onChange={(e) => setDirectoryPath(e.target.value)}
-                  placeholder="Enter directory path..."
-                  className="px-3 py-1 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleIngestDirectory();
-                    if (e.key === 'Escape') {
-                      setShowDirectoryInput(false);
-                      setDirectoryPath('');
-                    }
-                  }}
-                  autoFocus
+                  type="file"
+                  id="directory-picker"
+                  {...({ webkitdirectory: "" } as any)}
+                  {...({ directory: "" } as any)}
+                  multiple
+                  onChange={handleDirectorySelect}
+                  disabled={isUploading}
+                  className="hidden"
                 />
-                <button
-                  onClick={handleIngestDirectory}
-                  disabled={isIngesting}
-                  className="btn-primary text-sm"
+                <label
+                  htmlFor="directory-picker"
+                  className={`px-3 py-1 border border-gray-300 rounded-lg text-sm cursor-pointer transition-colors ${
+                    isUploading 
+                      ? 'opacity-50 cursor-not-allowed bg-gray-100' 
+                      : 'hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500'
+                  }`}
+                  title="Select folder containing images"
                 >
-                  {isIngesting ? 'Setting...' : 'Set Directory'}
-                </button>
+                  {isUploading ? 'Processing...' : '📁 Choose Folder'}
+                </label>
                 <button
-                  onClick={() => {
-                    setShowDirectoryInput(false);
-                    setDirectoryPath('');
-                  }}
+                  onClick={() => setShowUploadArea(false)}
                   className="btn-secondary text-sm"
+                  disabled={isUploading}
                 >
                   Cancel
                 </button>

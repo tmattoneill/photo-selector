@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { apiClient } from '../api/client';
-import type { CreatePortfolioRequest, ExportPortfolioRequest } from '../api/types';
+import type { CreatePortfolioRequest } from '../api/types';
 
 interface PortfolioModalProps {
   imageIds: string[];
@@ -15,12 +15,11 @@ export const PortfolioModal: React.FC<PortfolioModalProps> = ({
 }) => {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [exportPath, setExportPath] = useState('');
   const [isCreating, setIsCreating] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [portfolioId, setPortfolioId] = useState<string | null>(null);
-  const [exportResult, setExportResult] = useState<string | null>(null);
+  const [downloadResult, setDownloadResult] = useState<string | null>(null);
 
   const handleCreatePortfolio = async () => {
     if (!name.trim()) {
@@ -48,47 +47,19 @@ export const PortfolioModal: React.FC<PortfolioModalProps> = ({
     }
   };
 
-  const handleSelectDirectory = async () => {
-    try {
-      // Check if we're running in a browser that supports the File System Access API
-      if ('showDirectoryPicker' in window) {
-        const dirHandle = await (window as any).showDirectoryPicker();
-        setExportPath(dirHandle.name); // This will show the folder name
-        // Store the full handle for later use
-        (window as any).selectedDirHandle = dirHandle;
-      } else {
-        // Fallback for browsers without File System Access API
-        setError('Directory picker not supported. Please enter the path manually.');
-      }
-    } catch (err) {
-      if ((err as any).name !== 'AbortError') {
-        setError('Failed to select directory');
-      }
-    }
-  };
-
-  const handleExportPortfolio = async () => {
+  const handleDownloadPortfolio = async () => {
     if (!portfolioId) return;
 
-    if (!exportPath.trim()) {
-      setError('Please select or enter an export directory path');
-      return;
-    }
-
-    setIsExporting(true);
+    setIsDownloading(true);
     setError(null);
 
     try {
-      const request: ExportPortfolioRequest = {
-        directory_path: exportPath.trim(),
-      };
-
-      const response = await apiClient.exportPortfolio(portfolioId, request);
-      setExportResult(`Successfully exported ${response.exported_count} images to ${response.export_path}`);
+      await apiClient.downloadPortfolio(portfolioId);
+      setDownloadResult(`Successfully downloaded portfolio "${name}" as a zip file`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to export portfolio');
+      setError(err instanceof Error ? err.message : 'Failed to download portfolio');
     } finally {
-      setIsExporting(false);
+      setIsDownloading(false);
     }
   };
 
@@ -179,9 +150,9 @@ export const PortfolioModal: React.FC<PortfolioModalProps> = ({
               </div>
             </>
           ) : (
-            // Step 2: Export Portfolio
+            // Step 2: Download Portfolio
             <>
-              {!exportResult ? (
+              {!downloadResult ? (
                 <>
                   <div className="mb-4">
                     <div className="bg-green-100 border border-green-200 text-green-700 px-3 py-2 rounded-lg text-sm mb-4">
@@ -190,30 +161,12 @@ export const PortfolioModal: React.FC<PortfolioModalProps> = ({
                   </div>
 
                   <div className="space-y-4">
-                    <div>
-                      <label htmlFor="exportPath" className="block text-sm font-medium text-gray-700 mb-2">
-                        Export Directory *
-                      </label>
-                      <div className="flex items-center space-x-2">
-                        <input
-                          id="exportPath"
-                          type="text"
-                          value={exportPath}
-                          onChange={(e) => setExportPath(e.target.value)}
-                          placeholder="Select directory or enter path..."
-                          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                        <button
-                          type="button"
-                          onClick={handleSelectDirectory}
-                          className="px-4 py-2 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-lg text-sm font-medium transition-colors"
-                          disabled={isExporting}
-                        >
-                          📁 Browse
-                        </button>
-                      </div>
-                      <p className="text-xs text-gray-500 mt-1">
-                        Images will be saved in a subfolder named "portfolio_{name}"
+                    <div className="text-center">
+                      <p className="text-gray-700 mb-4">
+                        Ready to download your portfolio as a zip file?
+                      </p>
+                      <p className="text-sm text-gray-500">
+                        The zip file will contain all {imageIds.length} selected images and will be saved to your browser's default download folder.
                       </p>
                     </div>
                   </div>
@@ -228,16 +181,16 @@ export const PortfolioModal: React.FC<PortfolioModalProps> = ({
                     <button
                       onClick={handleComplete}
                       className="btn-secondary"
-                      disabled={isExporting}
+                      disabled={isDownloading}
                     >
-                      Skip Export
+                      Skip Download
                     </button>
                     <button
-                      onClick={handleExportPortfolio}
-                      disabled={isExporting || !exportPath.trim()}
+                      onClick={handleDownloadPortfolio}
+                      disabled={isDownloading}
                       className="btn-primary"
                     >
-                      {isExporting ? 'Exporting...' : 'Export Images'}
+                      {isDownloading ? 'Downloading...' : '📁 Download Portfolio'}
                     </button>
                   </div>
                 </>
@@ -245,7 +198,7 @@ export const PortfolioModal: React.FC<PortfolioModalProps> = ({
                 // Step 3: Success
                 <>
                   <div className="bg-green-100 border border-green-200 text-green-700 px-3 py-2 rounded-lg text-sm mb-4">
-                    ✅ {exportResult}
+                    ✅ {downloadResult}
                   </div>
 
                   <div className="flex items-center justify-end space-x-3 mt-6">

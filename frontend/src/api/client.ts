@@ -71,6 +71,34 @@ export const apiClient = {
     return response.data;
   },
 
+  async downloadPortfolio(portfolioId: string): Promise<void> {
+    const response = await api.get(`/portfolio/${portfolioId}/download`, {
+      responseType: 'blob'
+    });
+    
+    // Create a download link and trigger it
+    const blob = new Blob([response.data], { type: 'application/zip' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    
+    // Get filename from Content-Disposition header or use default
+    const contentDisposition = response.headers['content-disposition'];
+    let filename = 'portfolio.zip';
+    if (contentDisposition) {
+      const matches = /filename="?([^"]+)"?/i.exec(contentDisposition);
+      if (matches) {
+        filename = matches[1];
+      }
+    }
+    
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  },
+
   async exportPortfolio(portfolioId: string, request: ExportPortfolioRequest): Promise<ExportResponse> {
     const response = await api.post(`/portfolio/${portfolioId}/export`, request);
     return response.data;

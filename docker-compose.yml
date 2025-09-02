@@ -10,6 +10,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./samples:/samples:ro  # Mount samples directory as read-only
+      - ${HOME}:/host_home:ro  # Mount user's home directory for image access
     ports:
       - "5432:5432"
     healthcheck:
@@ -30,6 +31,7 @@ services:
       MAX_IMAGE_MB: 8
     volumes:
       - ./samples:/samples:ro  # Mount samples directory as read-only
+      - ${HOME}:/host_home:ro  # Mount user's home directory for image access
     ports:
       - "8000:8000"
     depends_on:

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Header } from '../components/Header';
 import { PairSelector } from '../components/PairSelector';
+import { ResetButton } from '../components/ResetButton';
 import { apiClient } from '../api/client';
 import type { PairResponse, Selection } from '../api/types';
 
@@ -39,6 +40,9 @@ export const Home: React.FC = () => {
           right_sha256: pair.right.sha256,
           selection,
         });
+
+        // Update round counter immediately
+        setTotalRounds(prev => prev + 1);
 
         // Load next pair
         await loadPair();
@@ -131,19 +135,25 @@ export const Home: React.FC = () => {
       
       {/* Navigation */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-        <div className="flex items-center space-x-6">
-          <Link
-            to="/stats"
-            className="inline-flex items-center text-blue-600 hover:text-blue-800 text-sm font-medium"
-          >
-            📊 View Statistics
-          </Link>
-          <Link
-            to="/gallery"
-            className="inline-flex items-center text-blue-600 hover:text-blue-800 text-sm font-medium"
-          >
-            🖼️ View Gallery
-          </Link>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-6">
+            <Link
+              to="/stats"
+              className="inline-flex items-center text-blue-600 hover:text-blue-800 text-sm font-medium"
+            >
+              📊 View Statistics
+            </Link>
+            <Link
+              to="/gallery"
+              className="inline-flex items-center text-blue-600 hover:text-blue-800 text-sm font-medium"
+            >
+              🖼️ View Gallery
+            </Link>
+          </div>
+          
+          <div className="flex items-center">
+            <ResetButton />
+          </div>
         </div>
       </div>
 

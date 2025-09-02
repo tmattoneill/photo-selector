@@ -11,6 +11,13 @@ class Image(Base):
     # Primary key
     sha256 = Column(String(64), primary_key=True)
     
+    # File information
+    file_path = Column(String(512), nullable=True)
+    original_filename = Column(String(256), nullable=True)
+    width = Column(Integer, nullable=True)
+    height = Column(Integer, nullable=True)
+    file_size = Column(Integer, nullable=True)
+    
     # Elo+σ rating fields
     mu = Column(Float, nullable=False, default=1500.0, server_default=text('1500.0'))
     sigma = Column(Float, nullable=False, default=350.0, server_default=text('350.0'))
