@@ -229,7 +229,7 @@ export const Home: React.FC = () => {
                   </div>
                   <div>
                     <h3 className="font-medium text-gray-900">Choose Your Images</h3>
-                    <p className="text-gray-600 text-sm">Click "📁 Select Folder" above and choose a directory containing your images</p>
+                    <p className="text-gray-600 text-sm">Click "📁 Select Image Folder" to choose a directory, or "🖼️ Select Images" to pick individual files</p>
                   </div>
                 </div>
                 <div className="flex items-start space-x-3">
@@ -253,7 +253,8 @@ export const Home: React.FC = () => {
               </div>
             </div>
 
-            <div className="space-x-4">
+            <div className="space-x-4 flex flex-wrap justify-center gap-4">
+              {/* Folder Selection */}
               <input
                 type="file"
                 id="welcome-directory-picker"
@@ -274,7 +275,28 @@ export const Home: React.FC = () => {
                 <span>📁</span>
                 <span>{isUploading ? 'Processing...' : 'Select Image Folder'}</span>
               </label>
-              <Link to="/gallery" className="btn-secondary inline-block">
+
+              {/* Individual Files Selection */}
+              <input
+                type="file"
+                id="welcome-files-picker"
+                multiple
+                onChange={handleDirectoryUpload}
+                disabled={isUploading}
+                className="hidden"
+                accept="image/jpeg,image/jpg,image/png,image/webp,image/gif"
+              />
+              <label
+                htmlFor="welcome-files-picker"
+                className={`bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors inline-flex items-center space-x-2 cursor-pointer ${
+                  isUploading ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+              >
+                <span>🖼️</span>
+                <span>{isUploading ? 'Processing...' : 'Select Images'}</span>
+              </label>
+
+              <Link to="/gallery" className="btn-secondary inline-block py-3 px-6">
                 View Gallery
               </Link>
             </div>

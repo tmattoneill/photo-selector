@@ -152,6 +152,7 @@ class ConvergenceService:
             return {
                 'boundary_gap': float('inf'),
                 'boundary_sigmas': [0, 0],
+                'max_boundary_sigma': 0,
                 'k_image': None,
                 'k_plus_1_image': None
             }
@@ -255,6 +256,149 @@ class ConvergenceService:
         
         return f"Not ready: {', '.join(missing)}"
     
+    def get_portfolio_progress(self) -> Dict[str, Any]:
+        """
+        Calculate overall portfolio completion progress.
+        
+        Returns comprehensive progress metrics for UI display.
+        """
+        convergence_state = self.get_convergence_state()
+        coverage = convergence_state['coverage']
+        top_k_data = convergence_state['top_k']
+        boundary = convergence_state['boundary']
+        stability = convergence_state['stability']
+        
+        # Component progress calculations
+        components = self._calculate_component_progress(coverage, top_k_data, boundary, stability)
+        
+        # Overall progress using weighted formula
+        overall = (
+            0.30 * components['coverage']['progress'] +
+            0.25 * components['exposure']['progress'] + 
+            0.25 * components['confidence']['progress'] +
+            0.20 * components['stability']['progress']
+        )
+        
+        # Estimates and milestones
+        estimates = self._calculate_estimates(overall, coverage['total_count'])
+        milestones = self._get_milestone_info(overall)
+        
+        return {
+            'overall_progress': round(overall, 1),
+            'components': components,
+            'estimates': estimates,
+            'milestones': milestones
+        }
+    
+    def _calculate_component_progress(self, coverage: Dict, top_k_data: Dict, 
+                                    boundary: Dict, stability: Dict) -> Dict[str, Any]:
+        """Calculate progress for each component."""
+        
+        # Coverage Progress (30%): How many images have been seen
+        coverage_progress = coverage['coverage_pct']
+        
+        # Exposure Progress (25%): Images with sufficient exposures
+        ordered_images = self._get_ordered_images()
+        well_exposed = sum(1 for img in ordered_images 
+                          if img['exposures'] >= self.config['min_exposures_per_image'])
+        exposure_progress = (well_exposed / max(1, len(ordered_images))) * 100
+        
+        # Confidence Progress (25%): Boundary separation and sigma reduction
+        if boundary['boundary_gap'] == float('inf'):
+            confidence_progress = 100.0
+        else:
+            gap_progress = min(100, (boundary['boundary_gap'] / self.config['min_boundary_gap']) * 100)
+            sigma_progress = max(0, min(100, 
+                (self.config['sigma_confident_max'] - boundary['max_boundary_sigma']) / 
+                self.config['sigma_confident_max'] * 100))
+            confidence_progress = (gap_progress + sigma_progress) / 2
+        
+        # Stability Progress (20%): Top-K consistency (placeholder implementation)
+        stability_progress = 75.0 if stability['stability_attained'] else 40.0
+        
+        return {
+            'coverage': {
+                'progress': coverage_progress,
+                'label': 'Images Seen',
+                'value': coverage['seen_count'],
+                'total': coverage['total_count']
+            },
+            'exposure': {
+                'progress': exposure_progress,
+                'label': 'Evaluation Depth',
+                'value': well_exposed,
+                'total': len(ordered_images)
+            },
+            'confidence': {
+                'progress': confidence_progress,
+                'label': 'Confidence Level',
+                'value': boundary['boundary_gap'],
+                'target': self.config['min_boundary_gap']
+            },
+            'stability': {
+                'progress': stability_progress,
+                'label': 'Ranking Stability',
+                'value': stability['top_k_swaps_in_window'],
+                'target': self.config['max_rank_swaps_in_window']
+            }
+        }
+    
+    def _calculate_estimates(self, overall_progress: float, total_images: int) -> Dict[str, Any]:
+        """Calculate remaining comparisons and readiness."""
+        
+        # Base estimate: 5 comparisons per image for full evaluation
+        base_comparisons = total_images * 5
+        
+        # Adjust based on current progress
+        remaining_progress = 100 - overall_progress
+        comparisons_remaining = max(0, int((remaining_progress / 100) * base_comparisons))
+        
+        # Portfolio readiness (85% threshold)
+        portfolio_ready = overall_progress >= 85.0
+        
+        # Quality indicator
+        if overall_progress >= 95:
+            quality = "excellent"
+        elif overall_progress >= 85:
+            quality = "very good"
+        elif overall_progress >= 70:
+            quality = "good"
+        elif overall_progress >= 50:
+            quality = "fair"
+        else:
+            quality = "early"
+        
+        return {
+            'comparisons_remaining': comparisons_remaining,
+            'portfolio_ready': portfolio_ready,
+            'quality_indicator': quality
+        }
+    
+    def _get_milestone_info(self, progress: float) -> Dict[str, Any]:
+        """Get next milestone information."""
+        milestones = [
+            (25, "Getting started"),
+            (50, "Good progress"),
+            (75, "Portfolio taking shape"),
+            (85, "Ready to create portfolio"),
+            (95, "Excellent results")
+        ]
+        
+        next_milestone = None
+        next_label = None
+        
+        for milestone_pct, label in milestones:
+            if progress < milestone_pct:
+                next_milestone = milestone_pct
+                next_label = label
+                break
+        
+        return {
+            'next_milestone': next_milestone,
+            'next_milestone_label': next_label,
+            'current_milestone': max([m[0] for m in milestones if progress >= m[0]], default=0)
+        }
+
     def _generate_ui_signals(self, boundary: Dict[str, Any], stability: Dict[str, Any]) -> Dict[str, Any]:
         """Generate UI progress meters per algo-update.yaml ui_signals spec."""
         return {

@@ -106,3 +106,37 @@ export interface ResetResponse {
   message: string;
   reset_items: string[];
 }
+
+// Progress types
+export interface ComponentProgress {
+  progress: number;
+  label: string;
+  value: number;
+  total?: number;
+  target?: number;
+}
+
+export interface ProgressEstimates {
+  comparisons_remaining: number;
+  portfolio_ready: boolean;
+  quality_indicator: string;
+}
+
+export interface ProgressMilestones {
+  next_milestone: number | null;
+  next_milestone_label: string | null;
+  current_milestone: number;
+}
+
+export interface ProgressResponse {
+  overall_progress: number;
+  components: Record<string, ComponentProgress>;
+  estimates: ProgressEstimates;
+  milestones: ProgressMilestones;
+}
+
+export interface SimpleProgressResponse {
+  progress: number;
+  portfolio_ready: boolean;
+  quality: string;
+}

@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { ProgressBar } from './ProgressBar';
 
 interface HeaderProps {
   totalRounds: number;
@@ -9,9 +10,10 @@ export const Header: React.FC<HeaderProps> = ({ totalRounds, onDirectoryChange }
   const [isUploading, setIsUploading] = useState(false);
   const [showUploadArea, setShowUploadArea] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [progress, setProgress] = useState<{ progress: number; portfolio_ready: boolean; quality: string } | null>(null);
 
 
-  const handleDirectorySelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files || files.length === 0) {
       return;
@@ -105,6 +107,26 @@ export const Header: React.FC<HeaderProps> = ({ totalRounds, onDirectoryChange }
 
   const clearMessage = () => setMessage(null);
 
+  // Fetch progress data
+  useEffect(() => {
+    const fetchProgress = async () => {
+      try {
+        const response = await fetch('/api/progress/simple');
+        if (response.ok) {
+          const data = await response.json();
+          setProgress(data);
+        }
+      } catch (error) {
+        console.error('Failed to fetch progress:', error);
+      }
+    };
+
+    fetchProgress();
+    // Poll for progress every 5 seconds
+    const interval = setInterval(fetchProgress, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
   return (
     <header className="bg-white shadow-sm border-b border-gray-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -113,8 +135,18 @@ export const Header: React.FC<HeaderProps> = ({ totalRounds, onDirectoryChange }
             <h1 className="text-2xl font-bold text-gray-900">
               Image Preference Picker
             </h1>
-            <div className="ml-6 px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium">
-              Round {totalRounds}
+            <div className="ml-6">
+              {progress ? (
+                <ProgressBar
+                  progress={progress.progress}
+                  portfolioReady={progress.portfolio_ready}
+                  quality={progress.quality}
+                />
+              ) : (
+                <div className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium">
+                  Round {totalRounds}
+                </div>
+              )}
             </div>
           </div>
 
@@ -129,15 +161,17 @@ export const Header: React.FC<HeaderProps> = ({ totalRounds, onDirectoryChange }
               </button>
             ) : (
               <div className="flex items-center space-x-2">
+                {/* Folder Selection */}
                 <input
                   type="file"
                   id="directory-picker"
                   {...({ webkitdirectory: "" } as any)}
                   {...({ directory: "" } as any)}
                   multiple
-                  onChange={handleDirectorySelect}
+                  onChange={handleFileSelect}
                   disabled={isUploading}
                   className="hidden"
+                  accept="image/*"
                 />
                 <label
                   htmlFor="directory-picker"
@@ -150,6 +184,29 @@ export const Header: React.FC<HeaderProps> = ({ totalRounds, onDirectoryChange }
                 >
                   {isUploading ? 'Processing...' : '📁 Choose Folder'}
                 </label>
+
+                {/* Individual File Selection */}
+                <input
+                  type="file"
+                  id="files-picker"
+                  multiple
+                  onChange={handleFileSelect}
+                  disabled={isUploading}
+                  className="hidden"
+                  accept="image/jpeg,image/jpg,image/png,image/webp,image/gif"
+                />
+                <label
+                  htmlFor="files-picker"
+                  className={`px-3 py-1 border border-gray-300 rounded-lg text-sm cursor-pointer transition-colors ${
+                    isUploading 
+                      ? 'opacity-50 cursor-not-allowed bg-gray-100' 
+                      : 'hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500'
+                  }`}
+                  title="Select individual image files"
+                >
+                  {isUploading ? 'Processing...' : '🖼️ Choose Files'}
+                </label>
+
                 <button
                   onClick={() => setShowUploadArea(false)}
                   className="btn-secondary text-sm"
