@@ -12,7 +12,7 @@ router = APIRouter()
 
 UPLOAD_DIR = "/app/uploads"
 ALLOWED_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"}
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB per file
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB per file to avoid nginx issues
 
 # Ensure upload directory exists
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -36,12 +36,14 @@ async def upload_images(
     
     # Initialize directory service
     directory_service = DirectoryService(db)
-    directory_service.root_directory = UPLOAD_DIR
     
     for image in images:
         try:
+            print(f"Processing file: {image.filename}, content_type: {image.content_type}")
+            
             # Validate file type
             if image.content_type not in ALLOWED_TYPES:
+                print(f"File type rejected: {image.content_type}")
                 errors.append(f"{image.filename}: Unsupported file type {image.content_type}")
                 continue
             
@@ -49,7 +51,9 @@ async def upload_images(
             content = await image.read()
             
             # Validate file size
+            print(f"File size: {len(content)} bytes")
             if len(content) > MAX_FILE_SIZE:
+                print(f"File too large: {len(content)} > {MAX_FILE_SIZE}")
                 errors.append(f"{image.filename}: File too large ({len(content)} bytes)")
                 continue
             
@@ -59,6 +63,7 @@ async def upload_images(
             # Check if image already exists
             existing = db.query(Image).filter(Image.sha256 == sha256_hash).first()
             if existing:
+                print(f"Duplicate image found: {sha256_hash}")
                 errors.append(f"{image.filename}: Image already exists (duplicate)")
                 continue
             
@@ -96,8 +101,10 @@ async def upload_images(
             
             db.add(new_image)
             uploaded_count += 1
+            print(f"Successfully processed: {image.filename} -> {sha256_hash}")
             
         except Exception as e:
+            print(f"Error processing {image.filename}: {str(e)}")
             errors.append(f"{image.filename}: {str(e)}")
             continue
     
@@ -114,7 +121,10 @@ async def upload_images(
         "errors": errors
     }
     
+    print(f"Upload summary: {uploaded_count}/{len(images)} uploaded, errors: {errors}")
+    
     if uploaded_count == 0:
+        print("No images uploaded, raising 400 error")
         raise HTTPException(status_code=400, detail="No images were uploaded successfully")
     
     return JSONResponse(content=response_data)

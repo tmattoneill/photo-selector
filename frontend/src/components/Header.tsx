@@ -39,7 +39,7 @@ export const Header: React.FC<HeaderProps> = ({ totalRounds, onDirectoryChange }
 
     try {
       // Upload images in batches to avoid size limits
-      const batchSize = 10; // Upload 10 images at a time
+      const batchSize = 3; // Upload 3 images at a time to avoid nginx limits
       let totalUploaded = 0;
       const errors: string[] = [];
 

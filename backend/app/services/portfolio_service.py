@@ -75,9 +75,7 @@ class PortfolioService:
         # Get directory service to find image files
         directory_service = DirectoryService(self.db)
         
-        # Ensure directory is set
-        if len(directory_service.get_all_sha256s()) == 0:
-            directory_service.set_root_directory("/samples")
+        # Directory service is ready - uses /app/uploads
         
         # Create zip file in memory
         zip_buffer = BytesIO()
@@ -130,9 +128,7 @@ class PortfolioService:
         # Get directory service to find image files
         directory_service = DirectoryService(self.db)
         
-        # Ensure directory is set
-        if len(directory_service.get_all_sha256s()) == 0:
-            directory_service.set_root_directory("/samples")
+        # Directory service is ready - uses /app/uploads
         
         exported_count = 0
         

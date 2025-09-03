@@ -175,9 +175,7 @@ async def get_legacy_gallery_images(
     
     directory_service = DirectoryService(db)
     
-    # Ensure directory is set
-    if len(directory_service.get_all_sha256s()) == 0:
-        directory_service.set_root_directory("/samples")
+    # Get uploaded images
     
     # Get paths from cache
     all_sha256s = directory_service.get_all_sha256s()

@@ -34,9 +34,7 @@ async def get_stats(db: Session = Depends(get_db)):
     directory_service = DirectoryService(db)
     stats_data = service.get_stats()
     
-    # Get all images from current directory cache
-    if len(directory_service.get_all_sha256s()) == 0:
-        directory_service.set_root_directory("/samples")
+    # Get all uploaded images
     
     # Get paths from cache
     all_sha256s = directory_service.get_all_sha256s()

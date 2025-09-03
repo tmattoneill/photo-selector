@@ -29,16 +29,12 @@ async def get_image_pair(db: Session = Depends(get_db)):
     try:
         directory_service = DirectoryService(db)
         
-        # If cache is empty but we have images in database, try to rescan with samples
+        # Check if there are any uploaded images
         if len(directory_service.get_all_sha256s()) == 0:
-            # Try to rescan the samples directory (fallback directory)
-            try:
-                directory_service.set_root_directory("/samples")
-            except Exception as scan_error:
-                raise HTTPException(
-                    status_code=503, 
-                    detail=f"No directory set. Please POST to /api/directory first to set a directory. Scan error: {scan_error}"
-                )
+            raise HTTPException(
+                status_code=404,
+                detail="No images found. Please upload images using the folder picker in the UI."
+            )
         
         pairing_service = PairingService(db)
         
@@ -47,7 +43,7 @@ async def get_image_pair(db: Session = Depends(get_db)):
         if not left_data or not right_data:
             raise HTTPException(
                 status_code=404, 
-                detail="Not enough images available for pairing. Please set a directory with at least 2 images."
+                detail="Not enough images available for pairing. Please upload at least 2 images using the folder picker."
             )
         
         def format_image(image_data: dict) -> ImageData:

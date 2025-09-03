@@ -15,55 +15,61 @@ class ResetResponse(BaseModel):
 
 @router.post("/reset", response_model=ResetResponse)
 async def reset_gallery_data(db: Session = Depends(get_db)):
-    """Reset all gallery data for testing purposes."""
+    """Completely reset everything - delete all data and files."""
     
     try:
+        import os
+        import glob
+        
         reset_items = []
         
-        # Reset image statistics back to defaults
-        db.execute(text("""
-            UPDATE images SET 
-                likes = 0,
-                unlikes = 0, 
-                skips = 0,
-                exposures = 0,
-                mu = 1500.0,
-                sigma = 350.0,
-                last_seen_round = NULL,
-                next_eligible_round = NULL,
-                is_archived_hard_no = false
-        """))
-        reset_items.append("Image statistics and Elo ratings")
+        # Delete all uploaded files
+        upload_dir = "/app/uploads"
+        if os.path.exists(upload_dir):
+            for file_path in glob.glob(os.path.join(upload_dir, "*")):
+                try:
+                    os.remove(file_path)
+                except Exception:
+                    pass
+            reset_items.append("All uploaded files deleted")
         
-        # Clear all choice history  
+        # Delete all database records in correct order
         db.execute(text("DELETE FROM choices"))
-        reset_items.append("All choice history")
+        reset_items.append("All choices deleted")
         
-        # Reset round counter to 1
-        db.execute(text("UPDATE app_state_new SET round = 1"))
-        reset_items.append("Round counter")
-        
-        # Clear all portfolios (if tables exist)
+        # Clear all portfolios 
         try:
             db.execute(text("DELETE FROM portfolio_images"))
             db.execute(text("DELETE FROM portfolios"))
-            reset_items.append("All portfolios")
+            reset_items.append("All portfolios deleted")
         except Exception:
-            pass  # Tables may not exist yet
+            pass
         
-        # Clear gallery images (if tables exist)
+        # Clear galleries
         try:
             db.execute(text("DELETE FROM gallery_images"))
             db.execute(text("DELETE FROM galleries"))
-            reset_items.append("All galleries")
+            reset_items.append("All galleries deleted")
         except Exception:
-            pass  # Tables may not exist yet
+            pass
+        
+        # Delete all images
+        db.execute(text("DELETE FROM images"))
+        reset_items.append("All images deleted")
+        
+        # Reset app state
+        try:
+            db.execute(text("DELETE FROM app_state"))
+            db.execute(text("DELETE FROM app_state_new"))
+            reset_items.append("App state reset")
+        except Exception:
+            pass
         
         db.commit()
         
         return ResetResponse(
             success=True,
-            message="Gallery data has been reset successfully",
+            message="Everything has been completely reset - you can now start fresh",
             reset_items=reset_items
         )
         

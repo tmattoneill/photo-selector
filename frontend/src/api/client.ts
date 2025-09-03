@@ -10,13 +10,10 @@ import type {
   GalleryFilter,
   CreatePortfolioRequest,
   PortfolioResponse,
-  ExportPortfolioRequest,
-  ExportResponse,
   ResetResponse,
 } from './types';
 
-const BASE_URL = 'http://localhost:8000/api';
-const BACKEND_URL = 'http://localhost:8000';
+const BASE_URL = '/api';
 
 const api = axios.create({
   baseURL: BASE_URL,
@@ -25,7 +22,7 @@ const api = axios.create({
 
 // Helper function for constructing image URLs
 export const getImageUrl = (imagePath: string): string => {
-  return `${BACKEND_URL}${imagePath}`;
+  return imagePath; // Use relative paths for nginx proxy
 };
 
 export const apiClient = {
@@ -35,8 +32,16 @@ export const apiClient = {
   },
 
   async getPair(): Promise<PairResponse> {
-    const response = await api.get('/pair');
-    return response.data;
+    try {
+      const response = await api.get('/pair');
+      return response.data;
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.data?.detail) {
+        // Re-throw with the server's detailed error message
+        throw new Error(error.response.data.detail);
+      }
+      throw error;
+    }
   },
 
   async submitChoice(choice: ChoiceRequest): Promise<ChoiceResponse> {
@@ -99,10 +104,6 @@ export const apiClient = {
     window.URL.revokeObjectURL(url);
   },
 
-  async exportPortfolio(portfolioId: string, request: ExportPortfolioRequest): Promise<ExportResponse> {
-    const response = await api.post(`/portfolio/${portfolioId}/export`, request);
-    return response.data;
-  },
 
   async resetGalleryData(): Promise<ResetResponse> {
     const response = await api.post('/reset');

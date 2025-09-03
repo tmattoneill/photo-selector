@@ -15,23 +15,12 @@ class CreatePortfolioRequest(BaseModel):
     image_ids: List[str]
 
 
-class ExportPortfolioRequest(BaseModel):
-    directory_path: str
-
-
 class PortfolioResponse(BaseModel):
     portfolio_id: str
     name: str
     description: Optional[str]
     image_count: int
     created_at: str
-
-
-class ExportResponse(BaseModel):
-    success: bool
-    exported_count: int
-    export_path: str
-    message: str
 
 
 @router.post("/portfolio", response_model=PortfolioResponse)
@@ -129,36 +118,4 @@ async def download_portfolio(
             detail=f"Download failed: {str(e)}"
         )
 
-@router.post("/portfolio/{portfolio_id}/export", response_model=ExportResponse)
-async def export_portfolio(
-    portfolio_id: str,
-    request: ExportPortfolioRequest,
-    db: Session = Depends(get_db)
-):
-    """Export portfolio images to disk (legacy method)."""
-    service = PortfolioService(db)
-    
-    try:
-        result = service.export_portfolio(portfolio_id, request.directory_path)
-        
-        return ExportResponse(
-            success=True,
-            exported_count=result["exported_count"],
-            export_path=result["export_path"],
-            message=f"Successfully exported {result['exported_count']} images to {result['export_path']}"
-        )
-    except FileNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except PermissionError as e:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Permission denied: {str(e)}"
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Export failed: {str(e)}"
-        )
+# Export endpoint removed - use /download instead to get zip files

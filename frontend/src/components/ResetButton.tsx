@@ -11,12 +11,14 @@ export const ResetButton: React.FC = () => {
     setResetResult(null);
     
     try {
-      const response = await apiClient.resetGalleryData();
-      setResetResult(`✅ Reset successful! Cleared: ${response.reset_items.join(', ')}`);
+      await apiClient.resetGalleryData();
+      setResetResult(`✅ Reset successful! Redirecting to start...`);
       setShowConfirmation(false);
       
-      // Auto-clear the success message after 5 seconds
-      setTimeout(() => setResetResult(null), 5000);
+      // Reload the page after successful reset to show welcome screen
+      setTimeout(() => {
+        window.location.reload();
+      }, 1500);
       
     } catch (err) {
       setResetResult(`❌ Reset failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -51,11 +53,11 @@ export const ResetButton: React.FC = () => {
               This will permanently clear:
             </p>
             <ul className="text-xs text-gray-600 list-disc list-inside mb-3">
+              <li>All uploaded images and files</li>
               <li>All likes, unlikes, skips, and exposures</li>
-              <li>All choice history</li>
-              <li>All portfolios</li>
-              <li>All galleries</li>
-              <li>Round counter and Elo ratings</li>
+              <li>All choice history and round data</li>
+              <li>All portfolios and galleries</li>
+              <li>Everything - complete fresh start</li>
             </ul>
             <p className="text-sm text-red-600 font-medium">
               This action cannot be undone!
